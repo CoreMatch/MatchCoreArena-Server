@@ -5,30 +5,28 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"path/filepath"
+	"path"
 
 	_ "github.com/go-sql-driver/mysql"
 )
 
 // Config 数据库迁移配置
 type Config struct {
-	DBHost         string
-	DBPort         string
-	DBUser         string
-	DBPassword     string
-	DBName         string
-	MigrationsPath string
+	DBHost     string
+	DBPort     string
+	DBUser     string
+	DBPassword string
+	DBName     string
 }
 
 // LoadConfig 从环境变量加载配置
 func LoadConfig() *Config {
 	return &Config{
-		DBHost:         getEnv("DB_HOST", "localhost"),
-		DBPort:         getEnv("DB_PORT", "3306"),
-		DBUser:         getEnv("DB_USER", "root"),
-		DBPassword:     getEnv("DB_PASSWORD", ""),
-		DBName:         getEnv("DB_NAME", "matchcorearena"),
-		MigrationsPath: getEnv("MIGRATIONS_PATH", "migrations"),
+		DBHost:     getEnv("DB_HOST", "localhost"),
+		DBPort:     getEnv("DB_PORT", "3306"),
+		DBUser:     getEnv("DB_USER", "root"),
+		DBPassword: getEnv("DB_PASSWORD", ""),
+		DBName:     getEnv("DB_NAME", "matchcorearena"),
 	}
 }
 
@@ -56,11 +54,11 @@ func RunMigrations(cfg *Config) error {
 		return nil
 	}
 
-	// 执行 baseline SQL
-	baselinePath := filepath.Join(cfg.MigrationsPath, "baseline.sql")
+	// 执行 baseline SQL（从嵌入的文件系统读取）
+	baselinePath := path.Join("migrations", "baseline.sql")
 	log.Printf("执行 baseline: %s", baselinePath)
 
-	sqlContent, err := os.ReadFile(baselinePath)
+	sqlContent, err := MigrationsFS.ReadFile(baselinePath)
 	if err != nil {
 		return fmt.Errorf("读取 baseline 文件失败: %w", err)
 	}

@@ -25,12 +25,11 @@ func main() {
 
 	// 2. 使用应用配置构建数据库迁移配置
 	migrateCfg := &migrate.Config{
-		DBHost:         appCfg.Database.Host,
-		DBPort:         strconv.Itoa(appCfg.Database.Port),
-		DBUser:         appCfg.Database.User,
-		DBPassword:     appCfg.Database.Password,
-		DBName:         appCfg.Database.Name,
-		MigrationsPath: appCfg.Migrate.Path,
+		DBHost:     appCfg.Database.Host,
+		DBPort:     strconv.Itoa(appCfg.Database.Port),
+		DBUser:     appCfg.Database.User,
+		DBPassword: appCfg.Database.Password,
+		DBName:     appCfg.Database.Name,
 	}
 
 	// 3. 执行数据库迁移

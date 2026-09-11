@@ -33,7 +33,6 @@ type AppConfig struct {
 	Server   ServerConfig   `yaml:"server"`
 	Database DatabaseConfig `yaml:"database"`
 	Redis    RedisConfig    `yaml:"redis"`
-	Migrate  MigrateConfig  `yaml:"migrate"`
 	Auth     AuthConfig     `yaml:"auth"`
 }
 
@@ -72,11 +71,6 @@ type RedisConfig struct {
 	Port     int    `yaml:"port"`
 	Password string `yaml:"password"`
 	DB       int    `yaml:"db"`
-}
-
-// MigrateConfig 数据库迁移配置。
-type MigrateConfig struct {
-	Path string `yaml:"path"`
 }
 
 // rawConfig 用于在迁移前灵活读取未知字段。
@@ -264,9 +258,6 @@ func validate(cfg *AppConfig) error {
 	if cfg.Database.MaxOpenConns < 0 || cfg.Database.MaxIdleConns < 0 {
 		return errors.New("database 连接池参数不能为负数")
 	}
-	if cfg.Migrate.Path == "" {
-		return errors.New("migrate.path 必填")
-	}
 	// Auth 校验（1.2.0+）
 	if cfg.Auth.HRPAuth.BaseURL == "" {
 		return errors.New("auth.hrpauth.base_url 必填")
@@ -316,9 +307,6 @@ func createDefaultConfig(path string) error {
 			Port:     6379,
 			Password: "",
 			DB:       0,
-		},
-		Migrate: MigrateConfig{
-			Path: "migrations",
 		},
 		Auth: AuthConfig{
 			HRPAuth: HRPAuthConfig{

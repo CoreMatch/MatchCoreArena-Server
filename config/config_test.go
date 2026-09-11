@@ -45,9 +45,6 @@ func TestLoad_CreatesDefaultConfigWhenMissing(t *testing.T) {
 	if cfg.Database.Name != "matchcorearena" {
 		t.Errorf("数据库名称不匹配: 期望 matchcorearena, 实际 %s", cfg.Database.Name)
 	}
-	if cfg.Migrate.Path != "migrations" {
-		t.Errorf("迁移路径不匹配: 期望 migrations, 实际 %s", cfg.Migrate.Path)
-	}
 	if cfg.Auth.HRPAuth.BaseURL != "http://localhost:8080" {
 		t.Errorf("HRPAuth BaseURL 不匹配: 期望 http://localhost:8080, 实际 %s", cfg.Auth.HRPAuth.BaseURL)
 	}
@@ -83,8 +80,6 @@ redis:
   port: 6380
   password: "redispass"
   db: 1
-migrate:
-  path: "db/migrations"
 auth:
   hrpauth:
     base_url: "https://auth.example.com"

@@ -24,10 +24,6 @@ redis:
   password: ""
   db: 0
 
-migrate:
-  # 存放 migrations 目录的相对路径
-  path: "migrations"
-
 auth:
   hrpauth:
     # HRPAuth 根地址，用于所有 OAuth2 端点调用。
