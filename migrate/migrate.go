@@ -3,24 +3,20 @@ package migrate
 import (
 	"database/sql"
 	"fmt"
-	"io/fs"
 	"log"
 	"os"
 	"path/filepath"
-	"strings"
 
-	"github.com/golang-migrate/migrate/v4"
-	"github.com/golang-migrate/migrate/v4/source"
-	"github.com/golang-migrate/migrate/v4/source/iofs"
+	_ "github.com/go-sql-driver/mysql"
 )
 
 // Config 数据库迁移配置
 type Config struct {
-	DBHost     string
-	DBPort     string
-	DBUser     string
-	DBPassword string
-	DBName     string
+	DBHost         string
+	DBPort         string
+	DBUser         string
+	DBPassword     string
+	DBName         string
 	MigrationsPath string
 }
 
@@ -36,7 +32,7 @@ func LoadConfig() *Config {
 	}
 }
 
-// RunMigrations 执行数据库迁移
+// RunMigrations 执行数据库 baseline 迁移
 func RunMigrations(cfg *Config) error {
 	// 构建 MySQL 连接字符串
 	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?parseTime=true&charset=utf8mb4",
@@ -54,38 +50,37 @@ func RunMigrations(cfg *Config) error {
 		return fmt.Errorf("数据库 ping 失败: %w", err)
 	}
 
-	// 从本地文件系统加载迁移文件
-	sourceDriver, err := loadMigrationsFromFS(cfg.MigrationsPath)
+	// 检查是否已初始化（检查是否有任何表）
+	if isInitialized(db) {
+		log.Println("数据库已初始化，跳过 baseline")
+		return nil
+	}
+
+	// 执行 baseline SQL
+	baselinePath := filepath.Join(cfg.MigrationsPath, "baseline.sql")
+	log.Printf("执行 baseline: %s", baselinePath)
+
+	sqlContent, err := os.ReadFile(baselinePath)
 	if err != nil {
-		return fmt.Errorf("加载迁移文件失败: %w", err)
+		return fmt.Errorf("读取 baseline 文件失败: %w", err)
 	}
 
-	// 创建 migrate 实例
-	m, err := migrate.NewWithSourceInstance("iofs", sourceDriver, "mysql://"+dsn)
-	if err != nil {
-		return fmt.Errorf("创建 migrate 实例失败: %w", err)
-	}
-	defer m.Close()
-
-	// 执行迁移
-	log.Println("开始执行数据库迁移...")
-	if err := m.Up(); err != nil && err != migrate.ErrNoChange {
-		return fmt.Errorf("执行迁移失败: %w", err)
+	if _, err := db.Exec(string(sqlContent)); err != nil {
+		return fmt.Errorf("执行 baseline 失败: %w", err)
 	}
 
-	log.Println("数据库迁移完成")
+	log.Println("数据库 baseline 完成")
 	return nil
 }
 
-// loadMigrationsFromFS 从文件系统加载迁移
-func loadMigrationsFromFS(path string) (source.Driver, error) {
-	// 创建子文件系统
-	subFS, err := fs.Sub(os.DirFS(path), ".")
+// isInitialized 检查数据库是否已初始化
+func isInitialized(db *sql.DB) bool {
+	var count int
+	err := db.QueryRow("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE()").Scan(&count)
 	if err != nil {
-		return nil, fmt.Errorf("创建子文件系统失败: %w", err)
+		return false
 	}
-
-	return iofs.New(subFS, "migrations")
+	return count > 0
 }
 
 // getEnv 获取环境变量，带默认值
@@ -94,54 +89,4 @@ func getEnv(key, defaultValue string) string {
 		return value
 	}
 	return defaultValue
-}
-
-// GetMigrationFiles 获取迁移文件列表
-func GetMigrationFiles(migrationsPath string) ([]string, error) {
-	var files []string
-
-	err := filepath.Walk(migrationsPath, func(path string, info fs.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		if !info.IsDir() && strings.HasSuffix(path, ".up.sql") {
-			files = append(files, filepath.Base(path))
-		}
-		return nil
-	})
-
-	return files, err
-}
-
-// GetCurrentVersion 获取当前迁移版本
-func GetCurrentVersion(cfg *Config) (uint, bool, error) {
-	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?parseTime=true&charset=utf8mb4",
-		cfg.DBUser, cfg.DBPassword, cfg.DBHost, cfg.DBPort, cfg.DBName)
-
-	db, err := sql.Open("mysql", dsn)
-	if err != nil {
-		return 0, false, err
-	}
-	defer db.Close()
-
-	source, err := loadMigrationsFromFS(cfg.MigrationsPath)
-	if err != nil {
-		return 0, false, err
-	}
-
-	m, err := migrate.NewWithSourceInstance("iofs", source, "mysql://"+dsn)
-	if err != nil {
-		return 0, false, err
-	}
-	defer m.Close()
-
-	version, dirty, err := m.Version()
-	if err != nil {
-		if err == migrate.ErrNilVersion {
-			return 0, false, nil
-		}
-		return 0, false, err
-	}
-
-	return version, dirty, nil
 }
