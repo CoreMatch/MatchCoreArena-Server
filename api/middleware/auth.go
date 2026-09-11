@@ -99,3 +99,14 @@ func GetAccessToken(c *gin.Context) string {
 	token, _ := v.(string)
 	return token
 }
+
+// HasScope 检查当前请求是否包含指定 scope。
+func HasScope(c *gin.Context, requiredScope string) bool {
+	scopes := GetScopes(c)
+	for _, s := range scopes {
+		if s == requiredScope {
+			return true
+		}
+	}
+	return false
+}

@@ -23,6 +23,12 @@ func NewMatchHandler(svc service.MatchService) *MatchHandler {
 
 // Report POST /api/matches
 func (h *MatchHandler) Report(c *gin.Context) {
+	// 仅允许拥有 match:report scope 的客户端上报（系统/管理员）
+	if !middleware.HasScope(c, "match:report") {
+		response.FailCode(c, apperr.CodeOAuthInsufficientScope, "无权上报对战结果")
+		return
+	}
+
 	uid := middleware.GetUID(c)
 
 	var body service.ReportInput
