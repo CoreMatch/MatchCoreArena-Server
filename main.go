@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"MatchCoreArena-Server/migrate"
+	"MatchCoreArena-Server/redis"
 )
 
 func main() {
@@ -18,6 +19,14 @@ func main() {
 	if err := migrate.RunMigrations(migrateCfg); err != nil {
 		log.Fatalf("数据库迁移失败: %v", err)
 	}
+
+	// 初始化 Redis
+	log.Println("初始化 Redis 连接...")
+	rdb, err := redis.Init(redis.LoadConfig())
+	if err != nil {
+		log.Fatalf("Redis 初始化失败: %v", err)
+	}
+	defer rdb.Close()
 
 	// 初始化 Gin 路由
 	r := gin.Default()
