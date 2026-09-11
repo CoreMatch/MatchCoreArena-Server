@@ -68,7 +68,7 @@ func main() {
 	log.Println("Redis 连接成功")
 
 	// 6. 初始化 HRPAuth 客户端（启动时校验 HRPAuth 可达性）
-	hrpauthClient, err := auth.NewClient(appCfg.Auth.HRPAuth.BaseURL)
+	hrpauthClient, err := auth.NewClient(appCfg.Auth.HRPAuth.BaseURL, appCfg.Auth.HRPAuth.PublicClientID)
 	if err != nil {
 		log.Fatalf("初始化 HRPAuth 客户端失败: %v", err)
 	}

@@ -25,7 +25,7 @@ import (
 //  1. 将 CurrentVersion 提升到新版本；
 //  2. 在 migrations 列表中追加对应的迁移函数；
 //  3. 在 config.example.yaml 中同步更新。
-const CurrentVersion = "1.2.0"
+const CurrentVersion = "1.3.0"
 
 // AppConfig 应用配置根结构。
 type AppConfig struct {
@@ -43,7 +43,8 @@ type AuthConfig struct {
 
 // HRPAuthConfig HRPAuth IdP 配置。
 type HRPAuthConfig struct {
-	BaseURL string `yaml:"base_url"` // HRPAuth 根地址，如 http://localhost:8080
+	BaseURL        string `yaml:"base_url"`         // HRPAuth 根地址，如 http://localhost:8080
+	PublicClientID string `yaml:"public_client_id"` // OAuth2 public client_id，用于 refresh_token 等第一方流程
 }
 
 // ServerConfig HTTP 服务配置。
@@ -137,6 +138,27 @@ var migrations = []migration{
 			authRaw["hrpauth"] = map[string]any{
 				"base_url": baseURL,
 			}
+			in["auth"] = authRaw
+			return in, nil
+		},
+	},
+	{
+		from: "1.2.0",
+		to:   "1.3.0",
+		run: func(in rawConfig) (rawConfig, error) {
+			authRaw, _ := in["auth"].(map[string]any)
+			if authRaw == nil {
+				authRaw = map[string]any{}
+			}
+			hrpauthRaw, _ := authRaw["hrpauth"].(map[string]any)
+			if hrpauthRaw == nil {
+				hrpauthRaw = map[string]any{}
+			}
+			// 添加 public_client_id，默认值与 HRPAuth 配置对齐
+			if _, ok := hrpauthRaw["public_client_id"]; !ok {
+				hrpauthRaw["public_client_id"] = "hrpauth-webui"
+			}
+			authRaw["hrpauth"] = hrpauthRaw
 			in["auth"] = authRaw
 			return in, nil
 		},
@@ -310,7 +332,8 @@ func createDefaultConfig(path string) error {
 		},
 		Auth: AuthConfig{
 			HRPAuth: HRPAuthConfig{
-				BaseURL: "http://localhost:8080",
+				BaseURL:        "http://localhost:8080",
+				PublicClientID: "hrpauth-webui",
 			},
 		},
 	}

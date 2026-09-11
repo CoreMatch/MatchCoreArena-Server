@@ -17,13 +17,15 @@ import (
 
 // Client 是 HRPAuth 的轻量 HTTP 客户端。进程级单实例，并发安全。
 type Client struct {
-	baseURL string
-	http    *http.Client
+	baseURL        string
+	publicClientID string
+	http           *http.Client
 }
 
 // NewClient 构造 Client。baseURL 为 HRPAuth 根地址（如 http://localhost:8080）。
+// publicClientID 为 OAuth2 public client_id（如 hrpauth-webui），用于 refresh_token 等第一方流程。
 // 启动时校验 HRPAuth /status 可达性。
-func NewClient(baseURL string) (*Client, error) {
+func NewClient(baseURL, publicClientID string) (*Client, error) {
 	baseURL = strings.TrimRight(baseURL, "/")
 	httpClient := &http.Client{Timeout: 10 * time.Second}
 
@@ -36,8 +38,9 @@ func NewClient(baseURL string) (*Client, error) {
 	resp.Body.Close()
 
 	return &Client{
-		baseURL: baseURL,
-		http:    httpClient,
+		baseURL:        baseURL,
+		publicClientID: publicClientID,
+		http:           httpClient,
 	}, nil
 }
 
@@ -158,7 +161,7 @@ func (c *Client) RefreshToken(refreshToken string) (*TokenPair, error) {
 	form := url.Values{
 		"grant_type":    {"refresh_token"},
 		"refresh_token": {refreshToken},
-		"client_id":     {""}, // 填充在调用处
+		"client_id":     {c.publicClientID},
 	}
 
 	// 先构造完整请求，再执行

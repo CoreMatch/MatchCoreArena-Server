@@ -19,6 +19,7 @@ type TokenResult struct {
 // Verifier 定义 token 校验接口。
 type Verifier interface {
 	Verify(ctx context.Context, token string) (*TokenResult, error)
+	InvalidateCache(ctx context.Context, token string)
 }
 
 // TokenVerifier 通过调用 HRPAuth /user 校验 access_token。
@@ -77,4 +78,12 @@ func IsTokenExpiredError(err error) bool {
 		return false
 	}
 	return errors.Is(err, ErrTokenExpired)
+}
+
+// InvalidateCache 删除指定 token 的 Redis 校验缓存。
+// 用于注销后立即失效 token，避免缓存导致已吊销 token 仍可通过鉴权。
+func (v *TokenVerifier) InvalidateCache(ctx context.Context, token string) {
+	if v.redis != nil {
+		v.redis.Del(ctx, "mca:token_verify:"+token)
+	}
 }

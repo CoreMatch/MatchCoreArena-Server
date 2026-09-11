@@ -26,7 +26,7 @@ func Register(r *gin.Engine, db *sql.DB, oauthClient *auth.Client, ver auth.Veri
 	rankingSvc := service.NewRankingService(db)
 
 	// 初始化 handler 层
-	authH := handler.NewAuthHandler(oauthClient)
+	authH := handler.NewAuthHandler(oauthClient, ver)
 	userH := handler.NewUserHandler(userSvc)
 	friendH := handler.NewFriendHandler(friendSvc)
 	teamH := handler.NewTeamHandler(teamSvc)

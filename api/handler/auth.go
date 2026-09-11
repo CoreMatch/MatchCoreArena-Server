@@ -13,12 +13,13 @@ import (
 // AuthHandler 认证 HTTP handler。
 // 作为 HRPAuth 的透明代理：前端调 MCA，MCA 透传到 HRPAuth。
 type AuthHandler struct {
-	client *auth.Client
+	client   *auth.Client
+	verifier auth.Verifier
 }
 
 // NewAuthHandler 创建 AuthHandler。
-func NewAuthHandler(client *auth.Client) *AuthHandler {
-	return &AuthHandler{client: client}
+func NewAuthHandler(client *auth.Client, verifier auth.Verifier) *AuthHandler {
+	return &AuthHandler{client: client, verifier: verifier}
 }
 
 // LoginTicketRequest 前端发给 MCA 的登录请求。
@@ -111,7 +112,7 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 }
 
 // Logout POST /api/auth/logout
-// 用当前 Bearer token 调用 HRPAuth /oauth/revoke 吊销。
+// 用当前 Bearer token 调用 HRPAuth /oauth/revoke 吊销，并清除本地缓存。
 func (h *AuthHandler) Logout(c *gin.Context) {
 	token := c.GetString("_access_token")
 	if token == "" {
@@ -123,6 +124,9 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 		response.FailCode(c, apperr.CodeOAuthRevokeFailed, "注销失败")
 		return
 	}
+
+	// 清除 Redis 中的 token 校验缓存，使已吊销 token 立即失效
+	h.verifier.InvalidateCache(c.Request.Context(), token)
 
 	response.OK(c, "注销成功", nil)
 }
