@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path"
+	"strings"
 
 	_ "github.com/go-sql-driver/mysql"
 )
@@ -63,8 +64,11 @@ func RunMigrations(cfg *Config) error {
 		return fmt.Errorf("读取 baseline 文件失败: %w", err)
 	}
 
-	if _, err := db.Exec(string(sqlContent)); err != nil {
-		return fmt.Errorf("执行 baseline 失败: %w", err)
+	statements := splitSQL(string(sqlContent))
+	for i, stmt := range statements {
+		if _, err := db.Exec(stmt); err != nil {
+			return fmt.Errorf("执行 baseline 第 %d 条语句失败: %w", i+1, err)
+		}
 	}
 
 	log.Println("数据库 baseline 完成")
@@ -87,4 +91,34 @@ func getEnv(key, defaultValue string) string {
 		return value
 	}
 	return defaultValue
+}
+
+// splitSQL 将 SQL 文件按分号拆分为独立语句，跳过空语句和纯注释行。
+func splitSQL(content string) []string {
+	var stmts []string
+	var current strings.Builder
+	for _, line := range strings.Split(content, "\n") {
+		trimmed := strings.TrimSpace(line)
+		// 跳过空行和纯注释行
+		if trimmed == "" || strings.HasPrefix(trimmed, "--") {
+			continue
+		}
+		current.WriteString(line)
+		current.WriteString("\n")
+		// 遇到分号结尾则提交一条语句
+		if strings.HasSuffix(trimmed, ";") {
+			stmt := strings.TrimSpace(current.String())
+			stmt = strings.TrimSuffix(stmt, ";")
+			stmt = strings.TrimSpace(stmt)
+			if stmt != "" {
+				stmts = append(stmts, stmt)
+			}
+			current.Reset()
+		}
+	}
+	// 处理最后一条没有分号结尾的语句
+	if stmt := strings.TrimSpace(current.String()); stmt != "" {
+		stmts = append(stmts, stmt)
+	}
+	return stmts
 }
