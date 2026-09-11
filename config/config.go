@@ -151,6 +151,7 @@ var migrations = []migration{
 
 // Load 从指定路径加载配置文件，并完成版本校验/迁移，最终反序列化为 AppConfig。
 // 当 path 为空时使用 ENV CONFIG_PATH 或默认值 "config/config.yaml"。
+// 如果配置文件不存在，将自动创建默认配置文件。
 func Load(path string) (*AppConfig, error) {
 	if path == "" {
 		path = getEnv("CONFIG_PATH", "config/config.yaml")
@@ -158,7 +159,19 @@ func Load(path string) (*AppConfig, error) {
 
 	rawBytes, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("读取配置文件失败 (%s): %w", path, err)
+		if os.IsNotExist(err) {
+			// 配置文件不存在，创建默认配置文件
+			if err := createDefaultConfig(path); err != nil {
+				return nil, fmt.Errorf("创建默认配置文件失败 (%s): %w", path, err)
+			}
+			// 重新读取刚创建的配置文件
+			rawBytes, err = os.ReadFile(path)
+			if err != nil {
+				return nil, fmt.Errorf("读取新创建的配置文件失败 (%s): %w", path, err)
+			}
+		} else {
+			return nil, fmt.Errorf("读取配置文件失败 (%s): %w", path, err)
+		}
 	}
 
 	// 第一次解析为通用 map，用于执行迁移。
@@ -267,6 +280,69 @@ func getEnv(key, def string) string {
 		return v
 	}
 	return def
+}
+
+// createDefaultConfig 创建默认配置文件。
+// 使用内置的默认值生成配置文件，确保目录存在。
+func createDefaultConfig(path string) error {
+	// 确保目录存在
+	dir := "."
+	if idx := strings.LastIndex(path, "/"); idx > 0 {
+		dir = path[:idx]
+	}
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("创建目录失败: %w", err)
+	}
+
+	defaultConfig := &AppConfig{
+		Version: CurrentVersion,
+		Server: ServerConfig{
+			Host:                "0.0.0.0",
+			Port:                9178,
+			ReadTimeoutSeconds:  15,
+			WriteTimeoutSeconds: 15,
+		},
+		Database: DatabaseConfig{
+			Host:         "localhost",
+			Port:         3306,
+			User:         "root",
+			Password:     "",
+			Name:         "matchcorearena",
+			MaxOpenConns: 50,
+			MaxIdleConns: 10,
+		},
+		Redis: RedisConfig{
+			Host:     "localhost",
+			Port:     6379,
+			Password: "",
+			DB:       0,
+		},
+		Migrate: MigrateConfig{
+			Path: "migrations",
+		},
+		Auth: AuthConfig{
+			HRPAuth: HRPAuthConfig{
+				BaseURL: "http://localhost:8080",
+			},
+		},
+	}
+
+	data, err := yaml.Marshal(defaultConfig)
+	if err != nil {
+		return fmt.Errorf("序列化默认配置失败: %w", err)
+	}
+
+	// 添加 YAML 文件头注释
+	content := "# MatchCoreArena-Server 应用配置文件\n" +
+		"# 此文件由程序自动生成，请按需修改配置。\n" +
+		"# 版本变更由 config 包自动迁移。\n\n" +
+		string(data)
+
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		return fmt.Errorf("写入配置文件失败: %w", err)
+	}
+
+	return nil
 }
 
 // isValidSemVer 校验形如 "x.y.z" 的语义化版本字符串。

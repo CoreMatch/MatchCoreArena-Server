@@ -20,3 +20,5 @@ config/config.yaml
 *.log
 HA-Contract
 .trae
+build
+testuser.txt
