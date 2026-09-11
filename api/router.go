@@ -13,7 +13,7 @@ import (
 )
 
 // Register 装配所有 API 路由。
-func Register(r *gin.Engine, db *sql.DB, ver auth.Verifier, version string) {
+func Register(r *gin.Engine, db *sql.DB, oauthClient *auth.OAuthClient, version string) {
 	// 全局中间件
 	r.Use(middleware.RequestID())
 	r.Use(middleware.Recovery())
@@ -26,11 +26,14 @@ func Register(r *gin.Engine, db *sql.DB, ver auth.Verifier, version string) {
 	rankingSvc := service.NewRankingService(db)
 
 	// 初始化 handler 层
+	authH := handler.NewAuthHandler(oauthClient, userSvc)
 	userH := handler.NewUserHandler(userSvc)
 	friendH := handler.NewFriendHandler(friendSvc)
 	teamH := handler.NewTeamHandler(teamSvc)
 	matchH := handler.NewMatchHandler(matchSvc)
 	rankingH := handler.NewRankingHandler(rankingSvc)
+
+	ver := oauthClient.Verifier()
 
 	// 公开端点
 	r.GET("/api/status", func(c *gin.Context) {
@@ -39,10 +42,21 @@ func Register(r *gin.Engine, db *sql.DB, ver auth.Verifier, version string) {
 		})
 	})
 
+	// 认证端点（公开，无需鉴权）
+	authGroup := r.Group("/api/auth")
+	{
+		authGroup.GET("/login", authH.Login)
+		authGroup.POST("/callback", authH.Callback)
+		authGroup.POST("/refresh", authH.Refresh)
+	}
+
 	// 需要鉴权的端点
 	api := r.Group("/api")
 	api.Use(middleware.Auth(ver))
 	{
+		// 认证（需鉴权：logout 需要 token 用于吊销）
+		api.POST("/auth/logout", authH.Logout)
+
 		// users
 		api.GET("/users/me", userH.GetMe)
 		api.GET("/users/:uid", userH.GetByUID)

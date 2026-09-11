@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"log"
@@ -54,13 +55,17 @@ func main() {
 	}
 	log.Println("数据库连接成功")
 
-	// 5. 初始化 token 校验器（骨架阶段使用 MockVerifier）
-	var verifier auth.Verifier = &auth.MockVerifier{}
-	log.Println("使用 MockVerifier（骨架阶段），请在实现期替换为 HRPAuthVerifier")
+	// 5. 初始化 HRPAuth OAuth2 客户端（启动时校验 IdP 可达性）
+	ctx := context.Background()
+	oauthClient, err := auth.NewOAuthClient(ctx, &appCfg.Auth.HRPAuth)
+	if err != nil {
+		log.Fatalf("初始化 HRPAuth OAuth 客户端失败: %v", err)
+	}
+	log.Println("HRPAuth OAuth 客户端初始化成功")
 
 	// 6. 初始化 Gin 路由
 	r := gin.Default()
-	api.Register(r, db, verifier, appCfg.Version)
+	api.Register(r, db, oauthClient, appCfg.Version)
 
 	// 7. 启动服务器
 	addr := appCfg.Server.Host + ":" + strconv.Itoa(appCfg.Server.Port)

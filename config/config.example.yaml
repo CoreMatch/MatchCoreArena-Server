@@ -1,7 +1,7 @@
 # MatchCoreArena-Server 应用配置模板
 # 复制为 config.yaml 后按需修改；版本变更由 config 包自动迁移。
 
-version: "1.0.0"
+version: "1.1.0"
 
 server:
   host: "0.0.0.0"
@@ -27,3 +27,18 @@ redis:
 migrate:
   # 存放 migrations 目录的相对路径
   path: "migrations"
+
+auth:
+  hrpauth:
+    issuer: "https://hrpauth.example.com"
+    authorization_endpoint: "https://hrpauth.example.com/oauth2/authorize"
+    token_endpoint: "https://hrpauth.example.com/oauth2/token"
+    userinfo_endpoint: "https://hrpauth.example.com/oauth2/userinfo"
+    revocation_endpoint: "https://hrpauth.example.com/oauth2/revoke"
+    client_id: "matchcore-arena"
+    client_secret: ""                    # 建议通过环境变量 AUTH_HRPAUTH_CLIENT_SECRET 设置
+    redirect_uri: "http://localhost:3000/callback"
+    scopes:
+      - "openid"
+      - "profile"
+    cookie_encryption_key: "__SET_ME__"  # 32字节以上，用于加密存储 PKCE code_verifier

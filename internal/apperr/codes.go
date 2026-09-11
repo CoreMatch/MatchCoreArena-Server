@@ -15,11 +15,15 @@ type Code string
 
 const (
 	// 复用 HA-Contract 已有的错误码
-	CodeInvalidRequest    Code = "invalid_request"
-	CodeOAuthLoginRequired  Code = "oauth_login_required"
+	CodeInvalidRequest         Code = "invalid_request"
+	CodeOAuthLoginRequired     Code = "oauth_login_required"
 	CodeOAuthInsufficientScope Code = "oauth_insufficient_scope"
-	CodeOAuthInvalidGrant   Code = "oauth_invalid_grant"
-	CodeInternal            Code = "internal_error"
+	CodeOAuthInvalidGrant      Code = "oauth_invalid_grant"
+	CodeOAuthStateMismatch     Code = "oauth_state_mismatch"
+	CodeOAuthTokenExpired      Code = "oauth_token_expired"
+	CodeOAuthRefreshFailed     Code = "oauth_refresh_failed"
+	CodeOAuthRevokeFailed      Code = "oauth_revoke_failed"
+	CodeInternal               Code = "internal_error"
 
 	// 本服务业务错误码
 	CodeMCAInvalidRequest    Code = "mca_invalid_request"
@@ -34,11 +38,15 @@ const (
 
 // codeHTTPMap 将错误码映射到建议 HTTP 状态码。
 var codeHTTPMap = map[Code]int{
-	CodeInvalidRequest:        http.StatusBadRequest,
-	CodeOAuthLoginRequired:    http.StatusUnauthorized,
+	CodeInvalidRequest:         http.StatusBadRequest,
+	CodeOAuthLoginRequired:     http.StatusUnauthorized,
 	CodeOAuthInsufficientScope: http.StatusForbidden,
-	CodeOAuthInvalidGrant:     http.StatusUnauthorized,
-	CodeInternal:              http.StatusInternalServerError,
+	CodeOAuthInvalidGrant:      http.StatusUnauthorized,
+	CodeOAuthStateMismatch:     http.StatusBadRequest,
+	CodeOAuthTokenExpired:      http.StatusUnauthorized,
+	CodeOAuthRefreshFailed:     http.StatusUnauthorized,
+	CodeOAuthRevokeFailed:      http.StatusBadRequest,
+	CodeInternal:               http.StatusInternalServerError,
 	CodeMCAInvalidRequest:     http.StatusBadRequest,
 	CodeMCAUserNotFound:       http.StatusNotFound,
 	CodeMCAFriendNotFound:     http.StatusNotFound,

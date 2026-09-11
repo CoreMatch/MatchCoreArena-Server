@@ -25,7 +25,7 @@ import (
 //  1. 将 CurrentVersion 提升到新版本；
 //  2. 在 migrations 列表中追加对应的迁移函数；
 //  3. 在 config.example.yaml 中同步更新。
-const CurrentVersion = "1.0.0"
+const CurrentVersion = "1.1.0"
 
 // AppConfig 应用配置根结构。
 type AppConfig struct {
@@ -34,6 +34,26 @@ type AppConfig struct {
 	Database DatabaseConfig `yaml:"database"`
 	Redis    RedisConfig    `yaml:"redis"`
 	Migrate  MigrateConfig  `yaml:"migrate"`
+	Auth     AuthConfig     `yaml:"auth"`
+}
+
+// AuthConfig 认证配置。
+type AuthConfig struct {
+	HRPAuth HRPAuthConfig `yaml:"hrpauth"`
+}
+
+// HRPAuthConfig HRPAuth IdP 配置。
+type HRPAuthConfig struct {
+	Issuer               string   `yaml:"issuer"`
+	AuthorizationEndpoint string  `yaml:"authorization_endpoint"`
+	TokenEndpoint        string   `yaml:"token_endpoint"`
+	UserInfoEndpoint     string   `yaml:"userinfo_endpoint"`
+	RevocationEndpoint   string   `yaml:"revocation_endpoint"`
+	ClientID             string   `yaml:"client_id"`
+	ClientSecret         string   `yaml:"client_secret"`
+	RedirectURI          string   `yaml:"redirect_uri"`
+	Scopes               []string `yaml:"scopes"`
+	CookieEncryptionKey  string   `yaml:"cookie_encryption_key"`
 }
 
 // ServerConfig HTTP 服务配置。
@@ -80,7 +100,32 @@ type migration struct {
 
 // migrations 按版本顺序注册的迁移链。每一项描述 from -> to 的变更。
 // 添加新版本时，从前一个版本依次 append 即可。
-var migrations = []migration{}
+var migrations = []migration{
+	{
+		from: "1.0.0",
+		to:   "1.1.0",
+		run: func(in rawConfig) (rawConfig, error) {
+			// 新增 auth 块（空默认值），由 validate 在配置文件层面要求必填。
+			if _, ok := in["auth"]; !ok {
+				in["auth"] = map[string]any{
+					"hrpauth": map[string]any{
+						"issuer":                 "",
+						"authorization_endpoint": "",
+						"token_endpoint":         "",
+						"userinfo_endpoint":      "",
+						"revocation_endpoint":    "",
+						"client_id":              "",
+						"client_secret":          "",
+						"redirect_uri":           "",
+						"scopes":                 []any{"openid", "profile"},
+						"cookie_encryption_key":  "",
+					},
+				}
+			}
+			return in, nil
+		},
+	},
+}
 
 // Load 从指定路径加载配置文件，并完成版本校验/迁移，最终反序列化为 AppConfig。
 // 当 path 为空时使用 ENV CONFIG_PATH 或默认值 "config/config.yaml"。
@@ -186,6 +231,19 @@ func validate(cfg *AppConfig) error {
 	}
 	if cfg.Migrate.Path == "" {
 		return errors.New("migrate.path 必填")
+	}
+	// Auth 校验（1.1.0+）
+	if cfg.Auth.HRPAuth.Issuer == "" {
+		return errors.New("auth.hrpauth.issuer 必填")
+	}
+	if cfg.Auth.HRPAuth.ClientID == "" {
+		return errors.New("auth.hrpauth.client_id 必填")
+	}
+	if cfg.Auth.HRPAuth.RedirectURI == "" {
+		return errors.New("auth.hrpauth.redirect_uri 必填")
+	}
+	if cfg.Auth.HRPAuth.CookieEncryptionKey == "" {
+		return errors.New("auth.hrpauth.cookie_encryption_key 必填")
 	}
 	return nil
 }
