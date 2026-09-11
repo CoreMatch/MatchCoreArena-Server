@@ -1,0 +1,1081 @@
+openapi: 3.1.0
+info:
+  title: MatchCoreArena Business API
+  version: 1.1.0
+  description: >
+    Unified specification for MatchCoreArena server business interfaces.
+    Authentication via HRPAuth OAuth2 Authorization Code + PKCE.
+    All protected endpoints require `Authorization: Bearer <access_token>`.
+servers:
+  - url: /
+paths:
+  /status:
+    get:
+      summary: Get service status
+      tags: [System]
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessEnvelope'
+
+  # ─── Authentication ────────────────────────────────────────────────────
+  /api/auth/login:
+    get:
+      summary: Get OAuth2 authorization parameters
+      description: >
+        Returns authorization_url, state and code_verifier for the frontend
+        to initiate the OAuth2 Authorization Code + PKCE flow with HRPAuth.
+        The frontend should redirect the user to `authorization_url`.
+      tags: [Auth]
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '500': { $ref: '#/components/responses/Error' }
+
+  /api/auth/callback:
+    post:
+      summary: Exchange authorization code for tokens
+      description: >
+        The frontend sends the `code` received from HRPAuth callback along
+        with the `state` and `code_verifier` obtained from `/api/auth/login`.
+        Returns access_token and refresh_token.
+      tags: [Auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code, state, code_verifier]
+              properties:
+                code:
+                  type: string
+                  description: Authorization code from HRPAuth callback
+                state:
+                  type: string
+                  description: State parameter from `/api/auth/login`
+                code_verifier:
+                  type: string
+                  description: PKCE code_verifier from `/api/auth/login`
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+
+  /api/auth/refresh:
+    post:
+      summary: Refresh access token
+      description: >
+        Exchange a valid refresh_token for a new access_token/refresh_token pair.
+      tags: [Auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token:
+                  type: string
+                  description: Refresh token from previous token response
+      responses:
+        '200':
+          description: Refresh successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+
+  /api/auth/logout:
+    post:
+      summary: Revoke tokens and logout
+      description: >
+        Revokes the current access_token and/or refresh_token.
+        Requires Bearer authentication.
+      tags: [Auth]
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                access_token:
+                  type: string
+                  description: Access token to revoke (optional, defaults to Bearer token)
+                refresh_token:
+                  type: string
+                  description: Refresh token to revoke (optional)
+      responses:
+        '200':
+          description: Logout successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessEnvelope'
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+
+  # ─── Users ─────────────────────────────────────────────────────────────
+  /api/users/me:
+    get:
+      summary: Get current user profile
+      description: Returns the authenticated user's full profile.
+      tags: [Users]
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/User'
+        '401': { $ref: '#/components/responses/Error' }
+
+  /api/users/{uid}:
+    get:
+      summary: Get user profile by UID
+      description: Returns a user's public profile.
+      tags: [Users]
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: path
+          name: uid
+          required: true
+          schema:
+            type: integer
+            format: int64
+          description: User UID
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/User'
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+
+  /api/users/me/experience:
+    post:
+      summary: Add experience to current user
+      description: Increases the authenticated user's experience points.
+      tags: [Users]
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [amount]
+              properties:
+                amount:
+                  type: integer
+                  format: int64
+                  description: Amount of experience to add
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/User'
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+
+  # ─── Friends ───────────────────────────────────────────────────────────
+  /api/friends:
+    get:
+      summary: List friends
+      description: Returns the authenticated user's friend list (accepted only).
+      tags: [Friends]
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Friend'
+        '401': { $ref: '#/components/responses/Error' }
+    post:
+      summary: Send friend request
+      description: Sends a friend request to the target user.
+      tags: [Friends]
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [target_uid]
+              properties:
+                target_uid:
+                  type: integer
+                  format: int64
+                  description: Target user's UID
+      responses:
+        '201':
+          description: Friend request sent
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/Friend'
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+
+  /api/friends/{id}/accept:
+    put:
+      summary: Accept friend request
+      description: Accepts a pending friend request.
+      tags: [Friends]
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+            format: int64
+          description: Friend request ID
+      responses:
+        '200':
+          description: Friend request accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessEnvelope'
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+
+  /api/friends/{id}/reject:
+    put:
+      summary: Reject friend request
+      description: Rejects a pending friend request.
+      tags: [Friends]
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+            format: int64
+          description: Friend request ID
+      responses:
+        '200':
+          description: Friend request rejected
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessEnvelope'
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+
+  /api/friends/{id}:
+    delete:
+      summary: Delete friend
+      description: Removes a friend relationship.
+      tags: [Friends]
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+            format: int64
+          description: Friend relationship ID
+      responses:
+        '200':
+          description: Friend deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessEnvelope'
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+
+  # ─── Teams ─────────────────────────────────────────────────────────────
+  /api/teams:
+    post:
+      summary: Create team
+      description: Creates a new team. The creator becomes the leader.
+      tags: [Teams]
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                  maxLength: 50
+                  description: Team name (must be unique)
+                description:
+                  type: string
+                  description: Team description
+      responses:
+        '201':
+          description: Team created
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/Team'
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+
+  /api/teams/{id}:
+    get:
+      summary: Get team by ID
+      description: Returns team details.
+      tags: [Teams]
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+            format: int64
+          description: Team ID
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/Team'
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+    delete:
+      summary: Disband team
+      description: Disbands the team. Only the leader can perform this action.
+      tags: [Teams]
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+            format: int64
+          description: Team ID
+      responses:
+        '200':
+          description: Team disbanded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessEnvelope'
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+
+  /api/teams/{id}/members:
+    get:
+      summary: List team members
+      description: Returns all members of the specified team.
+      tags: [Teams]
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+            format: int64
+          description: Team ID
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/TeamMember'
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+    post:
+      summary: Add team member
+      description: Adds a user to the team. Requires leader or vice-leader role.
+      tags: [Teams]
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+            format: int64
+          description: Team ID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_uid]
+              properties:
+                user_uid:
+                  type: integer
+                  format: int64
+                  description: UID of the user to add
+                role:
+                  type: integer
+                  enum: [0, 1]
+                  default: 0
+                  description: 'Role: 0=member, 1=vice-leader'
+      responses:
+        '200':
+          description: Member added
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/TeamMember'
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+
+  /api/teams/{id}/members/{uid}/role:
+    put:
+      summary: Update team member role
+      description: Changes a member's role. Requires leader role.
+      tags: [Teams]
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+            format: int64
+          description: Team ID
+        - in: path
+          name: uid
+          required: true
+          schema:
+            type: integer
+            format: int64
+          description: Target user UID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role]
+              properties:
+                role:
+                  type: integer
+                  enum: [0, 1, 2]
+                  description: 'New role: 0=member, 1=vice-leader, 2=leader'
+      responses:
+        '200':
+          description: Role updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessEnvelope'
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+
+  /api/teams/{id}/members/{uid}:
+    delete:
+      summary: Remove team member
+      description: Removes a member from the team. Requires leader or vice-leader role.
+      tags: [Teams]
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+            format: int64
+          description: Team ID
+        - in: path
+          name: uid
+          required: true
+          schema:
+            type: integer
+            format: int64
+          description: Target user UID
+      responses:
+        '200':
+          description: Member removed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessEnvelope'
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+
+  # ─── Matches ───────────────────────────────────────────────────────────
+  /api/matches:
+    post:
+      summary: Report match result
+      description: Records a completed match result.
+      tags: [Matches]
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MatchReportInput'
+      responses:
+        '201':
+          description: Match recorded
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/Match'
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+
+  /api/matches/{id}:
+    get:
+      summary: Get match by ID
+      description: Returns match details.
+      tags: [Matches]
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+            format: int64
+          description: Match ID
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/Match'
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+
+  /api/matches/me:
+    get:
+      summary: List my match history
+      description: Returns the authenticated user's match history with pagination.
+      tags: [Matches]
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: query
+          name: page_num
+          schema:
+            type: integer
+            default: 1
+          description: Page number
+        - in: query
+          name: page_size
+          schema:
+            type: integer
+            default: 20
+            maximum: 100
+          description: Page size
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Match'
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+
+  # ─── Rankings ──────────────────────────────────────────────────────────
+  /api/rankings/{type}:
+    get:
+      summary: Get top rankings
+      description: Returns the top N rankings for the specified type and season.
+      tags: [Rankings]
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: path
+          name: type
+          required: true
+          schema:
+            type: string
+          description: Ranking type (e.g. "1v1", "2v2")
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            default: 100
+            maximum: 500
+          description: Number of entries to return
+        - in: query
+          name: season
+          schema:
+            type: integer
+            default: 1
+          description: Season number
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Ranking'
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+
+  /api/rankings/me:
+    get:
+      summary: Get my ranking
+      description: Returns the authenticated user's ranking for the specified type.
+      tags: [Rankings]
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: query
+          name: type
+          required: true
+          schema:
+            type: string
+          description: Ranking type
+        - in: query
+          name: season
+          schema:
+            type: integer
+            default: 1
+          description: Season number
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/Ranking'
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      description: HRPAuth OAuth2 access token
+
+  responses:
+    Error:
+      description: Standard error response
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+
+  schemas:
+    # ─── Common ────────────────────────────────────────────────────────────
+    Meta:
+      type: object
+      required: [request_id]
+      properties:
+        request_id:
+          type: string
+
+    SuccessEnvelope:
+      type: object
+      required: [success, message, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        message:
+          type: string
+        data:
+          description: Response payload (varies by endpoint)
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    ErrorEnvelope:
+      type: object
+      required: [success, message, code, error, meta]
+      properties:
+        success:
+          type: boolean
+          const: false
+        message:
+          type: string
+        code:
+          type: string
+          description: Error code
+        error:
+          type: string
+          description: Compatible alias, value matches code
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    # ─── Auth ──────────────────────────────────────────────────────────────
+    LoginResponse:
+      type: object
+      required: [success, message, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        message:
+          type: string
+        data:
+          type: object
+          required: [authorization_url, state, code_verifier]
+          properties:
+            authorization_url:
+              type: string
+              description: Full URL to redirect the user to HRPAuth
+            state:
+              type: string
+              description: Opaque state parameter for CSRF protection
+            code_verifier:
+              type: string
+              description: PKCE code_verifier (store securely, needed for callback)
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    TokenResponse:
+      type: object
+      required: [success, message, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        message:
+          type: string
+        data:
+          type: object
+          required: [access_token, refresh_token, expires_in, token_type]
+          properties:
+            access_token:
+              type: string
+              description: OAuth2 access token (JWT)
+            refresh_token:
+              type: string
+              description: OAuth2 refresh token
+            expires_in:
+              type: integer
+              description: Access token lifetime in seconds
+            token_type:
+              type: string
+              description: Token type (typically "Bearer")
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    # ─── Users ─────────────────────────────────────────────────────────────
+    User:
+      type: object
+      required: [uid, level, experience, rank_score, created_at, updated_at]
+      properties:
+        uid:
+          type: integer
+          format: int64
+          description: User UID (from HRPAuth sub claim)
+        level:
+          type: integer
+          description: User level
+        experience:
+          type: integer
+          format: int64
+          description: Total experience points
+        rank_score:
+          type: integer
+          description: Current rank score
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    # ─── Friends ───────────────────────────────────────────────────────────
+    Friend:
+      type: object
+      required: [id, user_uid, friend_uid, status, created_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+          description: Friend relationship ID
+        user_uid:
+          type: integer
+          format: int64
+          description: Requester UID
+        friend_uid:
+          type: integer
+          format: int64
+          description: Target UID
+        status:
+          type: integer
+          enum: [0, 1, 2]
+          description: '0=pending, 1=accepted, 2=rejected'
+        created_at:
+          type: string
+          format: date-time
+
+    # ─── Teams ─────────────────────────────────────────────────────────────
+    Team:
+      type: object
+      required: [id, name, leader_uid, created_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+          description: Team ID
+        name:
+          type: string
+          description: Team name
+        description:
+          type: string
+          description: Team description
+        leader_uid:
+          type: integer
+          format: int64
+          description: Leader's UID
+        created_at:
+          type: string
+          format: date-time
+
+    TeamMember:
+      type: object
+      required: [id, team_id, user_uid, role, joined_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+          description: Membership record ID
+        team_id:
+          type: integer
+          format: int64
+        user_uid:
+          type: integer
+          format: int64
+        role:
+          type: integer
+          enum: [0, 1, 2]
+          description: '0=member, 1=vice-leader, 2=leader'
+        joined_at:
+          type: string
+          format: date-time
+
+    # ─── Matches ───────────────────────────────────────────────────────────
+    MatchReportInput:
+      type: object
+      required: [match_type, winner_uid, loser_uid, started_at, finished_at]
+      properties:
+        match_type:
+          type: string
+          description: Match type (e.g. "1v1", "2v2")
+        winner_uid:
+          type: integer
+          format: int64
+        loser_uid:
+          type: integer
+          format: int64
+        winner_score:
+          type: integer
+          default: 0
+        loser_score:
+          type: integer
+          default: 0
+        duration_seconds:
+          type: integer
+          default: 0
+          description: Match duration in seconds
+        started_at:
+          type: string
+          format: date-time
+        finished_at:
+          type: string
+          format: date-time
+
+    Match:
+      type: object
+      required: [id, match_type, winner_uid, loser_uid, winner_score, loser_score, duration_seconds, started_at, finished_at, created_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+        match_type:
+          type: string
+        winner_uid:
+          type: integer
+          format: int64
+        loser_uid:
+          type: integer
+          format: int64
+        winner_score:
+          type: integer
+        loser_score:
+          type: integer
+        duration_seconds:
+          type: integer
+        started_at:
+          type: string
+          format: date-time
+        finished_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+
+    # ─── Rankings ──────────────────────────────────────────────────────────
+    Ranking:
+      type: object
+      required: [id, user_uid, rank_type, score, rank_position, season, updated_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+        user_uid:
+          type: integer
+          format: int64
+        rank_type:
+          type: string
+        score:
+          type: integer
+          format: int64
+        rank_position:
+          type: integer
+        season:
+          type: integer
+        updated_at:
+          type: string
+          format: date-time
