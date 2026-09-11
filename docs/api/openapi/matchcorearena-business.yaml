@@ -1043,6 +1043,16 @@ components:
         loser_score:
           type: integer
           default: 0
+        winner_perf:
+          type: number
+          format: double
+          default: 1.0
+          description: Winner performance weight (e.g. 1.05 for MVP)
+        loser_perf:
+          type: number
+          format: double
+          default: 1.0
+          description: Loser performance weight
         duration_seconds:
           type: integer
           default: 0
@@ -1072,6 +1082,16 @@ components:
         winner_score:
           type: integer
         loser_score:
+          type: integer
+        winner_perf:
+          type: number
+          format: double
+        loser_perf:
+          type: number
+          format: double
+        winner_delta:
+          type: integer
+        loser_delta:
           type: integer
         duration_seconds:
           type: integer

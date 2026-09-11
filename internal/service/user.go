@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"database/sql"
+	"fmt"
 )
 
 // User 用户模型。
@@ -11,6 +12,7 @@ type User struct {
 	Level      int    `json:"level"`
 	Experience int64  `json:"experience"`
 	RankScore  int    `json:"rank_score"`
+	WinsCount  int    `json:"wins_count"`
 	CreatedAt  string `json:"created_at"`
 	UpdatedAt  string `json:"updated_at"`
 }
@@ -37,17 +39,21 @@ func NewUserService(db *sql.DB) UserService {
 	return &userService{db: db}
 }
 
-// GetByUID 获取用户公开信息（骨架 stub）。
+// GetByUID 获取用户公开信息。
 func (s *userService) GetByUID(ctx context.Context, uid int64) (*User, error) {
-	// TODO: SELECT uid, level, experience, rank_score, created_at, updated_at FROM users WHERE uid = ?
-	return &User{
-		UID:        uid,
-		Level:      1,
-		Experience: 0,
-		RankScore:  0,
-		CreatedAt:  "2026-09-11T00:00:00Z",
-		UpdatedAt:  "2026-09-11T00:00:00Z",
-	}, nil
+	var u User
+	err := s.db.QueryRowContext(ctx,
+		"SELECT uid, level, experience, rank_score, wins_count, created_at, updated_at FROM users WHERE uid = ? AND deleted_at IS NULL",
+		uid,
+	).Scan(&u.UID, &u.Level, &u.Experience, &u.RankScore, &u.WinsCount, &u.CreatedAt, &u.UpdatedAt)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("用户不存在")
+		}
+		return nil, fmt.Errorf("查询用户信息失败: %w", err)
+	}
+	return &u, nil
 }
 
 // GetMe 获取当前用户完整信息（骨架 stub）。
@@ -55,9 +61,11 @@ func (s *userService) GetMe(ctx context.Context, uid int64) (*User, error) {
 	return s.GetByUID(ctx, uid)
 }
 
-// AddExperience 增加经验（骨架 stub）。
+// AddExperience 增加经验。
 func (s *userService) AddExperience(ctx context.Context, uid int64, amount int64) (*User, error) {
-	// TODO: UPDATE users SET experience = experience + ? WHERE uid = ?
+	if _, err := s.db.ExecContext(ctx, "UPDATE users SET experience = experience + ? WHERE uid = ? AND deleted_at IS NULL", amount, uid); err != nil {
+		return nil, fmt.Errorf("增加经验失败: %w", err)
+	}
 	return s.GetByUID(ctx, uid)
 }
 

@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"database/sql"
+	"fmt"
 )
 
 // Ranking 排行榜条目模型。
@@ -34,32 +35,76 @@ func NewRankingService(db *sql.DB) RankingService {
 	return &rankingService{db: db}
 }
 
-// GetTop 获取排行榜 Top N（骨架 stub）。
+// GetTop 获取排行榜 Top N。
 func (s *rankingService) GetTop(ctx context.Context, rankType string, limit, season int) ([]*Ranking, error) {
-	// TODO: 优先从 Redis ZSET 读取（ZREVRANGE key 0 limit-1）
-	// TODO: 回退到 SELECT * FROM rankings WHERE rank_type = ? AND season = ? ORDER BY score DESC LIMIT ?
 	if limit <= 0 {
 		limit = 100
 	}
 	if season <= 0 {
 		season = 1
 	}
-	return []*Ranking{}, nil
+
+	// 计算排名
+	// 注意：这里我们实时计算排名，虽然性能一般，但逻辑最准确
+	// 生产环境应配合 Redis ZSET 或定期更新 rank_position 字段
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, user_uid, rank_type, score, season, updated_at 
+		 FROM rankings 
+		 WHERE rank_type = ? AND season = ? 
+		 ORDER BY score DESC LIMIT ?`,
+		rankType, season, limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("查询排行榜失败: %w", err)
+	}
+	defer rows.Close()
+
+	var rankings []*Ranking
+	pos := 1
+	for rows.Next() {
+		var r Ranking
+		if err := rows.Scan(&r.ID, &r.UserUID, &r.RankType, &r.Score, &r.Season, &r.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("解析排行榜记录失败: %w", err)
+		}
+		r.RankPosition = pos
+		rankings = append(rankings, &r)
+		pos++
+	}
+	return rankings, nil
 }
 
-// GetMyRank 获取我的排名（骨架 stub）。
+// GetMyRank 获取我的排名。
 func (s *rankingService) GetMyRank(ctx context.Context, uid int64, rankType string, season int) (*Ranking, error) {
-	// TODO: SELECT * FROM rankings WHERE user_uid = ? AND rank_type = ? AND season = ?
 	if season <= 0 {
 		season = 1
 	}
-	return &Ranking{
-		ID:           1,
-		UserUID:      uid,
-		RankType:     rankType,
-		Score:        0,
-		RankPosition: 0,
-		Season:       season,
-		UpdatedAt:    "2026-09-11T00:00:00Z",
-	}, nil
+
+	// 1. 获取我的记录
+	var r Ranking
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, user_uid, rank_type, score, season, updated_at 
+		 FROM rankings 
+		 WHERE user_uid = ? AND rank_type = ? AND season = ?`,
+		uid, rankType, season,
+	).Scan(&r.ID, &r.UserUID, &r.RankType, &r.Score, &r.Season, &r.UpdatedAt)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("未找到您的排名信息")
+		}
+		return nil, fmt.Errorf("查询排名失败: %w", err)
+	}
+
+	// 2. 计算实时排名
+	var pos int
+	err = s.db.QueryRowContext(ctx,
+		"SELECT COUNT(*) + 1 FROM rankings WHERE rank_type = ? AND season = ? AND score > ?",
+		rankType, season, r.Score,
+	).Scan(&pos)
+	if err != nil {
+		return nil, fmt.Errorf("计算排名位置失败: %w", err)
+	}
+	r.RankPosition = pos
+
+	return &r, nil
 }
