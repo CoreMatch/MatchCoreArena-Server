@@ -1,0 +1,22 @@
+# 实际部署配置（含密钥等敏感信息），不要提交到仓库
+config/config.yaml
+
+# Go 构建产物
+*.exe
+*.exe~
+*.dll
+*.dylib
+*.so
+*.dylib
+*.test
+*.out
+/bin/
+
+# IDE
+.idea/
+.vscode/
+
+# 日志 / 临时
+*.log
+HA-Contract
+.trae
