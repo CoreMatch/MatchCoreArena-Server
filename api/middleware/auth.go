@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"errors"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -39,6 +40,11 @@ func Auth(v auth.Verifier) gin.HandlerFunc {
 		if err != nil {
 			if auth.IsTokenExpiredError(err) {
 				response.FailCode(c, apperr.CodeOAuthTokenExpired, "token 已过期，请刷新")
+				c.Abort()
+				return
+			}
+			if errors.Is(err, auth.ErrTokenInvalid) {
+				response.FailCode(c, apperr.CodeOAuthInvalidGrant, "token 无效")
 				c.Abort()
 				return
 			}

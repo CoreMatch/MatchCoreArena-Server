@@ -1,112 +1,95 @@
 package handler
 
 import (
-	"context"
+	"errors"
 
 	"github.com/gin-gonic/gin"
 
 	"MatchCoreArena-Server/internal/apperr"
 	"MatchCoreArena-Server/internal/auth"
 	"MatchCoreArena-Server/internal/response"
-	"MatchCoreArena-Server/internal/service"
 )
 
 // AuthHandler 认证 HTTP handler。
+// 作为 HRPAuth 的透明代理：前端调 MCA，MCA 透传到 HRPAuth。
 type AuthHandler struct {
-	oauthClient *auth.OAuthClient
-	userSvc     service.UserService
+	client *auth.Client
 }
 
 // NewAuthHandler 创建 AuthHandler。
-func NewAuthHandler(oauthClient *auth.OAuthClient, userSvc service.UserService) *AuthHandler {
-	return &AuthHandler{
-		oauthClient: oauthClient,
-		userSvc:     userSvc,
-	}
+func NewAuthHandler(client *auth.Client) *AuthHandler {
+	return &AuthHandler{client: client}
 }
 
-// LoginResponse 登录参数响应。
-type LoginResponse struct {
-	AuthorizationURL string `json:"authorization_url"`
-	State            string `json:"state"`
-	CodeVerifier     string `json:"code_verifier"`
+// LoginTicketRequest 前端发给 MCA 的登录请求。
+type LoginTicketRequest struct {
+	Email    string `json:"email" binding:"required"`
+	Password string `json:"password" binding:"required"`
 }
 
-// Login GET /api/auth/login
-// 返回授权 URL、state、code_verifier，由前端自行跳转。
-func (h *AuthHandler) Login(c *gin.Context) {
-	authURL, state, codeVerifier, err := h.oauthClient.BuildLoginParams()
-	if err != nil {
-		response.Fail(c, "构建授权 URL 失败", err)
-		return
-	}
-
-	response.OK(c, "获取登录参数成功", LoginResponse{
-		AuthorizationURL: authURL,
-		State:            state,
-		CodeVerifier:     codeVerifier,
-	})
-}
-
-// CallbackRequest 回调请求。
-type CallbackRequest struct {
-	Code         string `json:"code" binding:"required"`
-	State        string `json:"state" binding:"required"`
-	CodeVerifier string `json:"code_verifier" binding:"required"`
-}
-
-// CallbackResponse 回调响应。
-type CallbackResponse struct {
-	AccessToken  string `json:"access_token"`
-	RefreshToken string `json:"refresh_token"`
-	ExpiresIn    int    `json:"expires_in"`
-	TokenType    string `json:"token_type"`
-}
-
-// Callback POST /api/auth/callback
-// 前端拿到 code 后 POST 到此端点，后端用 code 换取 token。
-func (h *AuthHandler) Callback(c *gin.Context) {
-	var req CallbackRequest
+// LoginTicket POST /api/auth/login-ticket
+// 透传邮箱密码到 HRPAuth /oauth/login-ticket。
+// 响应可能直接含 access_token，或含 totp_required + login_ticket。
+func (h *AuthHandler) LoginTicket(c *gin.Context) {
+	var req LoginTicketRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.FailCode(c, apperr.CodeMCAInvalidRequest, "缺少必要参数: code, state, code_verifier")
+		response.FailCode(c, apperr.CodeMCAInvalidRequest, "缺少必要参数: email, password")
 		return
 	}
 
-	ctx := context.Background()
-
-	// 用 code + code_verifier 换取 token
-	tokenSet, err := h.oauthClient.ExchangeCode(ctx, req.Code, req.CodeVerifier)
+	result, err := h.client.GetLoginTicket(req.Email, req.Password)
 	if err != nil {
-		response.FailCode(c, apperr.CodeOAuthInvalidGrant, "授权码换 token 失败")
+		if errors.Is(err, auth.ErrCredentialsInvalid) {
+			response.FailCode(c, apperr.CodeOAuthInvalidGrant, "邮箱或密码错误")
+			return
+		}
+		if errors.Is(err, auth.ErrRateLimited) {
+			response.FailCode(c, apperr.CodeOAuthRateLimited, "请求过于频繁，请稍后重试")
+			return
+		}
+		response.FailCode(c, apperr.CodeOAuthHRPAuthDown, "HRPAuth 不可用")
 		return
 	}
 
-	// 用 access_token 获取用户信息，确保用户在本地落库
-	if tokenSet.AccessToken != "" {
-		userInfo, err := h.oauthClient.FetchUserInfo(ctx, tokenSet.AccessToken)
-		if err == nil {
-			if sub, ok := userInfo["sub"].(string); ok {
-				h.userSvc.EnsureUser(c.Request.Context(), sub)
-			}
-		}
-		// userinfo 失败不阻塞登录流程
-	}
-
-	response.OK(c, "登录成功", CallbackResponse{
-		AccessToken:  tokenSet.AccessToken,
-		RefreshToken: tokenSet.RefreshToken,
-		ExpiresIn:    tokenSet.ExpiresIn,
-		TokenType:    tokenSet.TokenType,
-	})
+	// 直接返回 HRPAuth 原始响应（前端自行处理 totp_required 或 token）
+	response.OK(c, "认证请求已处理", result)
 }
 
-// RefreshRequest 刷新请求。
+// TotpVerifyRequest 前端发给 MCA 的 TOTP 验证请求。
+type TotpVerifyRequest struct {
+	LoginTicket string `json:"login_ticket" binding:"required"`
+	Passcode    string `json:"passcode" binding:"required"`
+}
+
+// TotpVerify POST /api/auth/totp-verify
+// 透传 login_ticket + passcode 到 HRPAuth /totp/verify。
+func (h *AuthHandler) TotpVerify(c *gin.Context) {
+	var req TotpVerifyRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.FailCode(c, apperr.CodeMCAInvalidRequest, "缺少必要参数: login_ticket, passcode")
+		return
+	}
+
+	tokenPair, err := h.client.VerifyTotp(req.LoginTicket, req.Passcode)
+	if err != nil {
+		if errors.Is(err, auth.ErrTotpInvalid) {
+			response.FailCode(c, apperr.CodeOAuthInvalidGrant, "TOTP 验证失败")
+			return
+		}
+		response.FailCode(c, apperr.CodeOAuthHRPAuthDown, "HRPAuth 不可用")
+		return
+	}
+
+	response.OK(c, "TOTP 验证成功", tokenPair)
+}
+
+// RefreshRequest 前端发给 MCA 的 token 刷新请求。
 type RefreshRequest struct {
 	RefreshToken string `json:"refresh_token" binding:"required"`
 }
 
 // Refresh POST /api/auth/refresh
-// 用 refresh_token 换取新的 access_token。
+// 透传 refresh_token 到 HRPAuth /oauth/token。
 func (h *AuthHandler) Refresh(c *gin.Context) {
 	var req RefreshRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -114,44 +97,31 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 		return
 	}
 
-	tokenSet, err := h.oauthClient.RefreshToken(c.Request.Context(), req.RefreshToken)
+	tokenPair, err := h.client.RefreshToken(req.RefreshToken)
 	if err != nil {
-		response.FailCode(c, apperr.CodeOAuthRefreshFailed, "刷新 token 失败")
+		if errors.Is(err, auth.ErrTokenRefreshFailed) {
+			response.FailCode(c, apperr.CodeOAuthRefreshFailed, "refresh_token 失效或过期")
+			return
+		}
+		response.FailCode(c, apperr.CodeOAuthHRPAuthDown, "HRPAuth 不可用")
 		return
 	}
 
-	response.OK(c, "刷新成功", CallbackResponse{
-		AccessToken:  tokenSet.AccessToken,
-		RefreshToken: tokenSet.RefreshToken,
-		ExpiresIn:    tokenSet.ExpiresIn,
-		TokenType:    tokenSet.TokenType,
-	})
-}
-
-// LogoutRequest 注销请求。
-type LogoutRequest struct {
-	AccessToken  string `json:"access_token"`
-	RefreshToken string `json:"refresh_token"`
+	response.OK(c, "刷新成功", tokenPair)
 }
 
 // Logout POST /api/auth/logout
-// 吊销 token。支持通过 Bearer header 或 body 传入 token。
+// 用当前 Bearer token 调用 HRPAuth /oauth/revoke 吊销。
 func (h *AuthHandler) Logout(c *gin.Context) {
-	var req LogoutRequest
-	c.ShouldBindJSON(&req) // body 可选
-
-	token := req.AccessToken
+	token := c.GetString("_access_token")
 	if token == "" {
-		// 从 header 取
-		token = c.GetString("_access_token") // 由中间件注入
+		response.FailCode(c, apperr.CodeMCAInvalidRequest, "缺少 access_token")
+		return
 	}
 
-	ctx := context.Background()
-	if token != "" {
-		h.oauthClient.RevokeToken(ctx, token)
-	}
-	if req.RefreshToken != "" {
-		h.oauthClient.RevokeToken(ctx, req.RefreshToken)
+	if err := h.client.RevokeToken(token); err != nil {
+		response.FailCode(c, apperr.CodeOAuthRevokeFailed, "注销失败")
+		return
 	}
 
 	response.OK(c, "注销成功", nil)

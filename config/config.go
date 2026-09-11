@@ -4,10 +4,10 @@
 //   - 使用 YAML 作为配置文件格式（默认路径 config/config.yaml，可由 ENV CONFIG_PATH 覆盖）。
 //   - 配置文件顶层必须包含 version 字段，遵循 SemVer（语义化版本）。
 //   - 加载时严格按照【当前代码内置的最新版本】进行强校验：
-//     * 版本号一致：直接使用。
-//     * 版本号落后：按顺序应用内置迁移规则升级到当前版本。
-//     * 版本号超前：返回错误，避免未知字段。
-//     * 缺失或非法 version：返回错误，不做宽松降级。
+//   - 版本号一致：直接使用。
+//   - 版本号落后：按顺序应用内置迁移规则升级到当前版本。
+//   - 版本号超前：返回错误，避免未知字段。
+//   - 缺失或非法 version：返回错误，不做宽松降级。
 package config
 
 import (
@@ -25,7 +25,7 @@ import (
 //  1. 将 CurrentVersion 提升到新版本；
 //  2. 在 migrations 列表中追加对应的迁移函数；
 //  3. 在 config.example.yaml 中同步更新。
-const CurrentVersion = "1.1.0"
+const CurrentVersion = "1.2.0"
 
 // AppConfig 应用配置根结构。
 type AppConfig struct {
@@ -44,16 +44,7 @@ type AuthConfig struct {
 
 // HRPAuthConfig HRPAuth IdP 配置。
 type HRPAuthConfig struct {
-	Issuer               string   `yaml:"issuer"`
-	AuthorizationEndpoint string  `yaml:"authorization_endpoint"`
-	TokenEndpoint        string   `yaml:"token_endpoint"`
-	UserInfoEndpoint     string   `yaml:"userinfo_endpoint"`
-	RevocationEndpoint   string   `yaml:"revocation_endpoint"`
-	ClientID             string   `yaml:"client_id"`
-	ClientSecret         string   `yaml:"client_secret"`
-	RedirectURI          string   `yaml:"redirect_uri"`
-	Scopes               []string `yaml:"scopes"`
-	CookieEncryptionKey  string   `yaml:"cookie_encryption_key"`
+	BaseURL string `yaml:"base_url"` // HRPAuth 根地址，如 http://localhost:8080
 }
 
 // ServerConfig HTTP 服务配置。
@@ -122,6 +113,37 @@ var migrations = []migration{
 					},
 				}
 			}
+			return in, nil
+		},
+	},
+	{
+		from: "1.1.0",
+		to:   "1.2.0",
+		run: func(in rawConfig) (rawConfig, error) {
+			// 重构 auth.hrpauth：移除 OIDC 端点字段，改为 base_url 单字段。
+			// 从旧 issuer 字段提取 base_url（去掉尾部斜杠和 /oauth2 路径）。
+			authRaw, _ := in["auth"].(map[string]any)
+			if authRaw == nil {
+				authRaw = map[string]any{}
+			}
+			hrpauthRaw, _ := authRaw["hrpauth"].(map[string]any)
+			if hrpauthRaw == nil {
+				hrpauthRaw = map[string]any{}
+			}
+
+			// 从 issuer 字段提取 base_url
+			baseURL := ""
+			if issuer, ok := hrpauthRaw["issuer"].(string); ok && issuer != "" {
+				baseURL = strings.TrimRight(issuer, "/")
+				// 移除常见的路径后缀
+				baseURL = strings.TrimSuffix(baseURL, "/oauth2")
+				baseURL = strings.TrimSuffix(baseURL, "/.well-known/openid-configuration")
+			}
+
+			authRaw["hrpauth"] = map[string]any{
+				"base_url": baseURL,
+			}
+			in["auth"] = authRaw
 			return in, nil
 		},
 	},
@@ -232,18 +254,9 @@ func validate(cfg *AppConfig) error {
 	if cfg.Migrate.Path == "" {
 		return errors.New("migrate.path 必填")
 	}
-	// Auth 校验（1.1.0+）
-	if cfg.Auth.HRPAuth.Issuer == "" {
-		return errors.New("auth.hrpauth.issuer 必填")
-	}
-	if cfg.Auth.HRPAuth.ClientID == "" {
-		return errors.New("auth.hrpauth.client_id 必填")
-	}
-	if cfg.Auth.HRPAuth.RedirectURI == "" {
-		return errors.New("auth.hrpauth.redirect_uri 必填")
-	}
-	if cfg.Auth.HRPAuth.CookieEncryptionKey == "" {
-		return errors.New("auth.hrpauth.cookie_encryption_key 必填")
+	// Auth 校验（1.2.0+）
+	if cfg.Auth.HRPAuth.BaseURL == "" {
+		return errors.New("auth.hrpauth.base_url 必填")
 	}
 	return nil
 }

@@ -13,7 +13,7 @@ import (
 )
 
 // Register 装配所有 API 路由。
-func Register(r *gin.Engine, db *sql.DB, oauthClient *auth.OAuthClient, version string) {
+func Register(r *gin.Engine, db *sql.DB, oauthClient *auth.Client, ver auth.Verifier, version string) {
 	// 全局中间件
 	r.Use(middleware.RequestID())
 	r.Use(middleware.Recovery())
@@ -26,14 +26,12 @@ func Register(r *gin.Engine, db *sql.DB, oauthClient *auth.OAuthClient, version 
 	rankingSvc := service.NewRankingService(db)
 
 	// 初始化 handler 层
-	authH := handler.NewAuthHandler(oauthClient, userSvc)
+	authH := handler.NewAuthHandler(oauthClient)
 	userH := handler.NewUserHandler(userSvc)
 	friendH := handler.NewFriendHandler(friendSvc)
 	teamH := handler.NewTeamHandler(teamSvc)
 	matchH := handler.NewMatchHandler(matchSvc)
 	rankingH := handler.NewRankingHandler(rankingSvc)
-
-	ver := oauthClient.Verifier()
 
 	// 公开端点
 	r.GET("/api/status", func(c *gin.Context) {
@@ -45,8 +43,8 @@ func Register(r *gin.Engine, db *sql.DB, oauthClient *auth.OAuthClient, version 
 	// 认证端点（公开，无需鉴权）
 	authGroup := r.Group("/api/auth")
 	{
-		authGroup.GET("/login", authH.Login)
-		authGroup.POST("/callback", authH.Callback)
+		authGroup.POST("/login-ticket", authH.LoginTicket)
+		authGroup.POST("/totp-verify", authH.TotpVerify)
 		authGroup.POST("/refresh", authH.Refresh)
 	}
 

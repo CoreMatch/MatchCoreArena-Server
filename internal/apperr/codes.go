@@ -23,17 +23,19 @@ const (
 	CodeOAuthTokenExpired      Code = "oauth_token_expired"
 	CodeOAuthRefreshFailed     Code = "oauth_refresh_failed"
 	CodeOAuthRevokeFailed      Code = "oauth_revoke_failed"
+	CodeOAuthRateLimited       Code = "oauth_rate_limited"
+	CodeOAuthHRPAuthDown       Code = "oauth_hrpaauth_down"
 	CodeInternal               Code = "internal_error"
 
 	// 本服务业务错误码
-	CodeMCAInvalidRequest    Code = "mca_invalid_request"
-	CodeMCAUserNotFound      Code = "mca_user_not_found"
-	CodeMCAFriendNotFound    Code = "mca_friend_not_found"
+	CodeMCAInvalidRequest      Code = "mca_invalid_request"
+	CodeMCAUserNotFound        Code = "mca_user_not_found"
+	CodeMCAFriendNotFound      Code = "mca_friend_not_found"
 	CodeMCAFriendRequestExists Code = "mca_friend_request_exists"
-	CodeMCATeamNotFound      Code = "mca_team_not_found"
-	CodeMCATeamNameTaken     Code = "mca_team_name_taken"
-	CodeMCANotTeamLeader     Code = "mca_not_team_leader"
-	CodeMCAMatchNotFound     Code = "mca_match_not_found"
+	CodeMCATeamNotFound        Code = "mca_team_not_found"
+	CodeMCATeamNameTaken       Code = "mca_team_name_taken"
+	CodeMCANotTeamLeader       Code = "mca_not_team_leader"
+	CodeMCAMatchNotFound       Code = "mca_match_not_found"
 )
 
 // codeHTTPMap 将错误码映射到建议 HTTP 状态码。
@@ -46,15 +48,17 @@ var codeHTTPMap = map[Code]int{
 	CodeOAuthTokenExpired:      http.StatusUnauthorized,
 	CodeOAuthRefreshFailed:     http.StatusUnauthorized,
 	CodeOAuthRevokeFailed:      http.StatusBadRequest,
+	CodeOAuthRateLimited:       http.StatusTooManyRequests,
+	CodeOAuthHRPAuthDown:       http.StatusBadGateway,
 	CodeInternal:               http.StatusInternalServerError,
-	CodeMCAInvalidRequest:     http.StatusBadRequest,
-	CodeMCAUserNotFound:       http.StatusNotFound,
-	CodeMCAFriendNotFound:     http.StatusNotFound,
+	CodeMCAInvalidRequest:      http.StatusBadRequest,
+	CodeMCAUserNotFound:        http.StatusNotFound,
+	CodeMCAFriendNotFound:      http.StatusNotFound,
 	CodeMCAFriendRequestExists: http.StatusConflict,
-	CodeMCATeamNotFound:       http.StatusNotFound,
-	CodeMCATeamNameTaken:      http.StatusConflict,
-	CodeMCANotTeamLeader:      http.StatusForbidden,
-	CodeMCAMatchNotFound:      http.StatusNotFound,
+	CodeMCATeamNotFound:        http.StatusNotFound,
+	CodeMCATeamNameTaken:       http.StatusConflict,
+	CodeMCANotTeamLeader:       http.StatusForbidden,
+	CodeMCAMatchNotFound:       http.StatusNotFound,
 }
 
 // StatusFromCode 根据错误码返回建议 HTTP 状态码，未注册的码返回 500。

@@ -1,7 +1,7 @@
 # MatchCoreArena-Server 应用配置模板
 # 复制为 config.yaml 后按需修改；版本变更由 config 包自动迁移。
 
-version: "1.1.0"
+version: "1.2.0"
 
 server:
   host: "0.0.0.0"
@@ -30,15 +30,6 @@ migrate:
 
 auth:
   hrpauth:
-    issuer: "https://hrpauth.example.com"
-    authorization_endpoint: "https://hrpauth.example.com/oauth2/authorize"
-    token_endpoint: "https://hrpauth.example.com/oauth2/token"
-    userinfo_endpoint: "https://hrpauth.example.com/oauth2/userinfo"
-    revocation_endpoint: "https://hrpauth.example.com/oauth2/revoke"
-    client_id: "matchcore-arena"
-    client_secret: ""                    # 建议通过环境变量 AUTH_HRPAUTH_CLIENT_SECRET 设置
-    redirect_uri: "http://localhost:3000/callback"
-    scopes:
-      - "openid"
-      - "profile"
-    cookie_encryption_key: "__SET_ME__"  # 32字节以上，用于加密存储 PKCE code_verifier
+    # HRPAuth 根地址，用于所有 OAuth2 端点调用。
+    # MCA 作为透明代理，将前端的 auth 请求透传到 HRPAuth。
+    base_url: "http://localhost:8080"

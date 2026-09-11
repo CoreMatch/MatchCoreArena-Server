@@ -22,30 +22,13 @@ paths:
                 $ref: '#/components/schemas/SuccessEnvelope'
 
   # ─── Authentication ────────────────────────────────────────────────────
-  /api/auth/login:
-    get:
-      summary: Get OAuth2 authorization parameters
-      description: >
-        Returns authorization_url, state and code_verifier for the frontend
-        to initiate the OAuth2 Authorization Code + PKCE flow with HRPAuth.
-        The frontend should redirect the user to `authorization_url`.
-      tags: [Auth]
-      responses:
-        '200':
-          description: Success
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/LoginResponse'
-        '500': { $ref: '#/components/responses/Error' }
-
-  /api/auth/callback:
+  /api/auth/login-ticket:
     post:
-      summary: Exchange authorization code for tokens
+      summary: Authenticate with email and password
       description: >
-        The frontend sends the `code` received from HRPAuth callback along
-        with the `state` and `code_verifier` obtained from `/api/auth/login`.
-        Returns access_token and refresh_token.
+        Proxies email/password to HRPAuth's /oauth/login-ticket endpoint.
+        Returns access_token/refresh_token directly if no TOTP is required,
+        or totp_required=true + login_ticket if TOTP verification is needed.
       tags: [Auth]
       requestBody:
         required: true
@@ -53,20 +36,48 @@ paths:
           application/json:
             schema:
               type: object
-              required: [code, state, code_verifier]
+              required: [email, password]
               properties:
-                code:
+                email:
                   type: string
-                  description: Authorization code from HRPAuth callback
-                state:
+                  description: User's email
+                password:
                   type: string
-                  description: State parameter from `/api/auth/login`
-                code_verifier:
-                  type: string
-                  description: PKCE code_verifier from `/api/auth/login`
+                  description: User's password
       responses:
         '200':
-          description: Login successful
+          description: Authentication processed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginTicketResponse'
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+
+  /api/auth/totp-verify:
+    post:
+      summary: Verify TOTP passcode
+      description: >
+        Proxies login_ticket + passcode to HRPAuth's /totp/verify endpoint.
+        Returns access_token and refresh_token on success.
+      tags: [Auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [login_ticket, passcode]
+              properties:
+                login_ticket:
+                  type: string
+                  description: Login ticket from /api/auth/login-ticket
+                passcode:
+                  type: string
+                  description: 6-digit TOTP passcode
+      responses:
+        '200':
+          description: TOTP verification successful
           content:
             application/json:
               schema:
@@ -845,7 +856,7 @@ components:
           $ref: '#/components/schemas/Meta'
 
     # ─── Auth ──────────────────────────────────────────────────────────────
-    LoginResponse:
+    LoginTicketResponse:
       type: object
       required: [success, message, data, meta]
       properties:
@@ -855,18 +866,36 @@ components:
         message:
           type: string
         data:
-          type: object
-          required: [authorization_url, state, code_verifier]
-          properties:
-            authorization_url:
-              type: string
-              description: Full URL to redirect the user to HRPAuth
-            state:
-              type: string
-              description: Opaque state parameter for CSRF protection
-            code_verifier:
-              type: string
-              description: PKCE code_verifier (store securely, needed for callback)
+          oneOf:
+            - type: object
+              description: Direct token response (no TOTP required)
+              required: [access_token, refresh_token]
+              properties:
+                access_token:
+                  type: string
+                  description: OAuth2 access token
+                refresh_token:
+                  type: string
+                  description: OAuth2 refresh token
+                expires_in:
+                  type: integer
+                  description: Access token lifetime in seconds
+                token_type:
+                  type: string
+                  description: Token type (typically "Bearer")
+            - type: object
+              description: TOTP required response
+              required: [totp_required, login_ticket]
+              properties:
+                totp_required:
+                  type: boolean
+                  const: true
+                login_ticket:
+                  type: string
+                  description: Short-lived ticket for /api/auth/totp-verify
+                expires_in:
+                  type: integer
+                  description: Ticket lifetime in seconds
         meta:
           $ref: '#/components/schemas/Meta'
 

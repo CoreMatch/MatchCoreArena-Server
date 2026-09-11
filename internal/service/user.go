@@ -23,8 +23,8 @@ type UserService interface {
 	GetMe(ctx context.Context, uid int64) (*User, error)
 	// AddExperience 增加经验（占位）。
 	AddExperience(ctx context.Context, uid int64, amount int64) (*User, error)
-	// EnsureUser 确保用户存在（首次登录时自动落库）。uid 为 HRPAuth sub 字符串。
-	EnsureUser(ctx context.Context, uid string)
+	// EnsureUser 确保用户存在（首次登录时自动落库）。uid 为 HRPAuth User.UID。
+	EnsureUser(ctx context.Context, uid int64)
 }
 
 // userService 数据库实现。
@@ -62,8 +62,7 @@ func (s *userService) AddExperience(ctx context.Context, uid int64, amount int64
 }
 
 // EnsureUser 确保用户存在（首次登录时自动落库）。
-func (s *userService) EnsureUser(ctx context.Context, uid string) {
+func (s *userService) EnsureUser(ctx context.Context, uid int64) {
 	// INSERT IGNORE INTO users (uid) VALUES (?)
-	// uid 为 HRPAuth sub，直接作为本地 uid
 	_, _ = s.db.ExecContext(ctx, "INSERT IGNORE INTO users (uid) VALUES (?)", uid)
 }

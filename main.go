@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"database/sql"
 	"fmt"
 	"log"
@@ -13,6 +12,7 @@ import (
 	"MatchCoreArena-Server/config"
 	"MatchCoreArena-Server/internal/auth"
 	"MatchCoreArena-Server/migrate"
+	"MatchCoreArena-Server/redis"
 )
 
 func main() {
@@ -55,19 +55,34 @@ func main() {
 	}
 	log.Println("数据库连接成功")
 
-	// 5. 初始化 HRPAuth OAuth2 客户端（启动时校验 IdP 可达性）
-	ctx := context.Background()
-	oauthClient, err := auth.NewOAuthClient(ctx, &appCfg.Auth.HRPAuth)
+	// 5. 初始化 Redis
+	redisClient, err := redis.Init(&redis.Config{
+		Host:     appCfg.Redis.Host,
+		Port:     strconv.Itoa(appCfg.Redis.Port),
+		Password: appCfg.Redis.Password,
+		DB:       appCfg.Redis.DB,
+	})
 	if err != nil {
-		log.Fatalf("初始化 HRPAuth OAuth 客户端失败: %v", err)
+		log.Fatalf("Redis 连接失败: %v", err)
 	}
-	log.Println("HRPAuth OAuth 客户端初始化成功")
+	defer redisClient.Close()
+	log.Println("Redis 连接成功")
 
-	// 6. 初始化 Gin 路由
+	// 6. 初始化 HRPAuth 客户端（启动时校验 HRPAuth 可达性）
+	hrpauthClient, err := auth.NewClient(appCfg.Auth.HRPAuth.BaseURL)
+	if err != nil {
+		log.Fatalf("初始化 HRPAuth 客户端失败: %v", err)
+	}
+	log.Println("HRPAuth 客户端初始化成功")
+
+	// 7. 创建 token verifier（调用 HRPAuth /user 校验 token，带 Redis 缓存）
+	tokenVerifier := auth.NewTokenVerifier(hrpauthClient, redisClient)
+
+	// 8. 初始化 Gin 路由
 	r := gin.Default()
-	api.Register(r, db, oauthClient, appCfg.Version)
+	api.Register(r, db, hrpauthClient, tokenVerifier, appCfg.Version)
 
-	// 7. 启动服务器
+	// 9. 启动服务器
 	addr := appCfg.Server.Host + ":" + strconv.Itoa(appCfg.Server.Port)
 	log.Printf("HTTP 服务启动于 %s", addr)
 	if err := r.Run(addr); err != nil {
