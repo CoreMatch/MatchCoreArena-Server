@@ -26,4 +26,7 @@ var (
 
 	// ErrUpstream HRPAuth 上游不可用（5xx、网络错误、超时）。
 	ErrUpstream = errors.New("hrpauth: upstream unavailable")
+
+	// ErrUserNotFound 在 HRPAuth 中找不到指定用户（username 或 uid）。
+	ErrUserNotFound = errors.New("hrpauth: user not found")
 )

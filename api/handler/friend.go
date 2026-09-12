@@ -1,24 +1,28 @@
 package handler
 
 import (
+	"errors"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
 	"MatchCoreArena-Server/api/middleware"
 	"MatchCoreArena-Server/internal/apperr"
+	"MatchCoreArena-Server/internal/auth"
 	"MatchCoreArena-Server/internal/response"
 	"MatchCoreArena-Server/internal/service"
 )
 
 // FriendHandler 好友 HTTP handler。
 type FriendHandler struct {
-	svc service.FriendService
+	svc     service.FriendService
+	authCli *auth.Client
 }
 
 // NewFriendHandler 创建 FriendHandler。
-func NewFriendHandler(svc service.FriendService) *FriendHandler {
-	return &FriendHandler{svc: svc}
+func NewFriendHandler(svc service.FriendService, authCli *auth.Client) *FriendHandler {
+	return &FriendHandler{svc: svc, authCli: authCli}
 }
 
 // List GET /api/friends
@@ -37,18 +41,35 @@ func (h *FriendHandler) Request(c *gin.Context) {
 	uid := middleware.GetUID(c)
 
 	var body struct {
-		TargetUID int64 `json:"target_uid" binding:"required"`
+		Username string `json:"username" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		response.FailCode(c, apperr.CodeMCAInvalidRequest, "target_uid 参数必填")
+		response.FailCode(c, apperr.CodeMCAInvalidRequest, "username 参数必填")
 		return
 	}
-	if body.TargetUID == uid {
+	username := strings.TrimSpace(body.Username)
+	if username == "" {
+		response.FailCode(c, apperr.CodeMCAInvalidRequest, "username 不能为空")
+		return
+	}
+
+	// 通过 HRPAuth 查找目标用户
+	targetUID, _, err := h.authCli.LookupUserByUsername(username)
+	if err != nil {
+		if errors.Is(err, auth.ErrUserNotFound) {
+			response.FailCode(c, apperr.CodeMCAInvalidRequest, "用户不存在")
+			return
+		}
+		response.Fail(c, "查找用户失败", err)
+		return
+	}
+
+	if targetUID == uid {
 		response.FailCode(c, apperr.CodeMCAInvalidRequest, "不能添加自己为好友")
 		return
 	}
 
-	f, err := h.svc.Request(c.Request.Context(), uid, body.TargetUID)
+	f, err := h.svc.Request(c.Request.Context(), uid, targetUID)
 	if err != nil {
 		response.Fail(c, "发送好友请求失败", err)
 		return
