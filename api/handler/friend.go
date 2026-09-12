@@ -2,8 +2,12 @@ package handler
 
 import (
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
+	"time"
+
+	goredis "github.com/redis/go-redis/v9"
 
 	"github.com/gin-gonic/gin"
 
@@ -18,11 +22,12 @@ import (
 type FriendHandler struct {
 	svc     service.FriendService
 	authCli *auth.Client
+	rdb     *goredis.Client
 }
 
 // NewFriendHandler 创建 FriendHandler。
-func NewFriendHandler(svc service.FriendService, authCli *auth.Client) *FriendHandler {
-	return &FriendHandler{svc: svc, authCli: authCli}
+func NewFriendHandler(svc service.FriendService, authCli *auth.Client, rdb *goredis.Client) *FriendHandler {
+	return &FriendHandler{svc: svc, authCli: authCli, rdb: rdb}
 }
 
 // List GET /api/friends
@@ -53,15 +58,38 @@ func (h *FriendHandler) Request(c *gin.Context) {
 		return
 	}
 
-	// 通过 HRPAuth 查找目标用户
-	targetUID, _, err := h.authCli.LookupUserByUsername(username)
-	if err != nil {
-		if errors.Is(err, auth.ErrUserNotFound) {
-			response.FailCode(c, apperr.CodeMCAInvalidRequest, "用户不存在")
+	ctx := c.Request.Context()
+	cacheKey := fmt.Sprintf("mca:lookup:username:%s", username)
+
+	var targetUID int64
+
+	// 1. 尝试从 Redis 缓存获取
+	if h.rdb != nil {
+		cached, err := h.rdb.Get(ctx, cacheKey).Result()
+		if err == nil && cached != "" {
+			if parsed, parseErr := strconv.ParseInt(cached, 10, 64); parseErr == nil {
+				targetUID = parsed
+			}
+		}
+	}
+
+	// 2. 缓存未命中，调用 HRPAuth
+	if targetUID == 0 {
+		resolvedUID, _, err := h.authCli.LookupUserByUsername(username)
+		if err != nil {
+			if errors.Is(err, auth.ErrUserNotFound) {
+				response.FailCode(c, apperr.CodeMCAInvalidRequest, "用户不存在")
+				return
+			}
+			response.Fail(c, "查找用户失败", err)
 			return
 		}
-		response.Fail(c, "查找用户失败", err)
-		return
+		targetUID = resolvedUID
+
+		// 3. 写入 Redis 缓存，TTL 10 分钟
+		if h.rdb != nil {
+			h.rdb.Set(ctx, cacheKey, fmt.Sprintf("%d", targetUID), 10*time.Minute)
+		}
 	}
 
 	if targetUID == uid {
@@ -69,7 +97,7 @@ func (h *FriendHandler) Request(c *gin.Context) {
 		return
 	}
 
-	f, err := h.svc.Request(c.Request.Context(), uid, targetUID)
+	f, err := h.svc.Request(ctx, uid, targetUID)
 	if err != nil {
 		response.Fail(c, "发送好友请求失败", err)
 		return

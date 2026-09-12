@@ -79,7 +79,7 @@ func main() {
 
 	// 8. 初始化 Gin 路由
 	r := gin.Default()
-	api.Register(r, db, hrpauthClient, tokenVerifier, appCfg.Version)
+	api.Register(r, db, hrpauthClient, tokenVerifier, redisClient, appCfg.Version)
 
 	// 9. 启动服务器
 	addr := appCfg.Server.Host + ":" + strconv.Itoa(appCfg.Server.Port)

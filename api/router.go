@@ -3,6 +3,8 @@ package api
 import (
 	"database/sql"
 
+	goredis "github.com/redis/go-redis/v9"
+
 	"github.com/gin-gonic/gin"
 
 	"MatchCoreArena-Server/api/handler"
@@ -13,7 +15,7 @@ import (
 )
 
 // Register 装配所有 API 路由。
-func Register(r *gin.Engine, db *sql.DB, oauthClient *auth.Client, ver auth.Verifier, version string) {
+func Register(r *gin.Engine, db *sql.DB, oauthClient *auth.Client, ver auth.Verifier, rdb *goredis.Client, version string) {
 	// 全局中间件
 	r.Use(middleware.RequestID())
 	r.Use(middleware.Recovery())
@@ -28,7 +30,7 @@ func Register(r *gin.Engine, db *sql.DB, oauthClient *auth.Client, ver auth.Veri
 	// 初始化 handler 层
 	authH := handler.NewAuthHandler(oauthClient, ver)
 	userH := handler.NewUserHandler(userSvc)
-	friendH := handler.NewFriendHandler(friendSvc, oauthClient)
+	friendH := handler.NewFriendHandler(friendSvc, oauthClient, rdb)
 	teamH := handler.NewTeamHandler(teamSvc)
 	matchH := handler.NewMatchHandler(matchSvc)
 	rankingH := handler.NewRankingHandler(rankingSvc)
