@@ -3,9 +3,14 @@ package service
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
+	goredis "github.com/redis/go-redis/v9"
+
+	"MatchCoreArena-Server/internal/auth"
 	"MatchCoreArena-Server/internal/rating"
 )
 
@@ -52,7 +57,7 @@ type TeamInfo struct {
 }
 
 type ParticipantReport struct {
-	UID          int64   `json:"uid" binding:"required"`
+	UUID         string  `json:"uuid" binding:"required"`
 	SurvivalTime int     `json:"survival_time"`
 	Kills        int     `json:"kills"`
 	Deaths       int     `json:"deaths"`
@@ -77,12 +82,18 @@ type MatchService interface {
 
 // matchService 数据库实现。
 type matchService struct {
-	db *sql.DB
+	db         *sql.DB
+	authClient *auth.Client
+	redis      *goredis.Client
 }
 
 // NewMatchService 创建 MatchService 实例。
-func NewMatchService(db *sql.DB) MatchService {
-	return &matchService{db: db}
+func NewMatchService(db *sql.DB, authClient *auth.Client, redis *goredis.Client) MatchService {
+	return &matchService{
+		db:         db,
+		authClient: authClient,
+		redis:      redis,
+	}
 }
 
 // Report 上报团队对战结果。
@@ -94,31 +105,37 @@ func (s *matchService) Report(ctx context.Context, reporterUID int64, in TeamRep
 	defer tx.Rollback()
 
 	// 1. 获取所有参与者的基本信息和 Elo
-	allParticipants := make(map[int64]*userRatingInfo)
+	allParticipants := make(map[string]*userRatingInfo) // key: UUID
 	allMembers := append([]ParticipantReport{}, in.WinnerTeam.Members...)
 	for _, team := range in.LoserTeams {
 		allMembers = append(allMembers, team.Members...)
 	}
 
 	for _, m := range allMembers {
-		info, err := s.getUserRatingInfo(ctx, tx, m.UID)
+		uid, err := s.resolveUID(ctx, m.UUID)
+		if err != nil {
+			return nil, fmt.Errorf("解析用户 UUID (%s) 失败: %w", m.UUID, err)
+		}
+
+		info, err := s.getUserRatingInfo(ctx, tx, uid)
 		if err != nil {
 			return nil, err
 		}
-		allParticipants[m.UID] = info
+		info.UID = uid
+		allParticipants[m.UUID] = info
 	}
 
 	// 2. 计算团队平均 Elo
 	winnerRatings := make([]float64, 0, len(in.WinnerTeam.Members))
 	for _, m := range in.WinnerTeam.Members {
-		winnerRatings = append(winnerRatings, float64(allParticipants[m.UID].RankScore))
+		winnerRatings = append(winnerRatings, float64(allParticipants[m.UUID].RankScore))
 	}
 	avgWinnerElo := rating.CalculateTeamAverageRating(winnerRatings)
 
 	loserRatings := make([]float64, 0)
 	for _, team := range in.LoserTeams {
 		for _, m := range team.Members {
-			loserRatings = append(loserRatings, float64(allParticipants[m.UID].RankScore))
+			loserRatings = append(loserRatings, float64(allParticipants[m.UUID].RankScore))
 		}
 	}
 	avgLoserElo := rating.CalculateTeamAverageRating(loserRatings)
@@ -145,8 +162,8 @@ func (s *matchService) Report(ctx context.Context, reporterUID int64, in TeamRep
 
 	// 5. 处理每个参与者的积分变动
 	processPlayer := func(p ParticipantReport, isWinner bool, teamID string) error {
-		info := allParticipants[p.UID]
-		streak, err := s.getUserStreak(ctx, tx, p.UID)
+		info := allParticipants[p.UUID]
+		streak, err := s.getUserStreak(ctx, tx, info.UID)
 		if err != nil {
 			return err
 		}
@@ -194,7 +211,7 @@ func (s *matchService) Report(ctx context.Context, reporterUID int64, in TeamRep
 
 		_, err = tx.ExecContext(ctx,
 			fmt.Sprintf("UPDATE users SET %s %s WHERE uid = ?", scoreUpdate, winsUpdate),
-			delta, p.UID,
+			delta, info.UID,
 		)
 		if err != nil {
 			return err
@@ -204,14 +221,14 @@ func (s *matchService) Report(ctx context.Context, reporterUID int64, in TeamRep
 		_, err = tx.ExecContext(ctx,
 			`INSERT INTO match_participants (match_id, user_uid, team_id, is_winner, rank_score_before, rank_score_delta, survival_time_seconds, kills, deaths)
 			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			matchID, p.UID, teamID, isWinner, info.RankScore, delta, p.SurvivalTime, p.Kills, p.Deaths,
+			matchID, info.UID, teamID, isWinner, info.RankScore, delta, p.SurvivalTime, p.Kills, p.Deaths,
 		)
 		if err != nil {
 			return err
 		}
 
 		// 更新排行榜
-		return s.updateRanking(ctx, tx, p.UID, in.MatchType, 1)
+		return s.updateRanking(ctx, tx, info.UID, in.MatchType, 1)
 	}
 
 	// 执行胜者处理
@@ -246,8 +263,35 @@ func (s *matchService) Report(ctx context.Context, reporterUID int64, in TeamRep
 }
 
 type userRatingInfo struct {
+	UID       int64
 	RankScore int
 	WinsCount int
+}
+
+func (s *matchService) resolveUID(ctx context.Context, uuid string) (int64, error) {
+	// 1. 尝试从 Redis 缓存获取
+	cacheKey := "mca:uuid_to_uid:" + uuid
+	if s.redis != nil {
+		if val, err := s.redis.Get(ctx, cacheKey).Result(); err == nil && val != "" {
+			return strconv.ParseInt(val, 10, 64)
+		}
+	}
+
+	// 2. 调用 HRPAuth API
+	uid, err := s.authClient.LookupUserByUUID(uuid)
+	if err != nil {
+		if errors.Is(err, auth.ErrUserNotFound) {
+			return 0, fmt.Errorf("用户不存在: %w", err)
+		}
+		return 0, fmt.Errorf("调用 HRPAuth 失败: %w", err)
+	}
+
+	// 3. 写入 Redis 缓存 (暂存)
+	if s.redis != nil {
+		s.redis.Set(ctx, cacheKey, strconv.FormatInt(uid, 10), 24*time.Hour)
+	}
+
+	return uid, nil
 }
 
 func (s *matchService) getUserRatingInfo(ctx context.Context, tx *sql.Tx, uid int64) (*userRatingInfo, error) {
@@ -255,12 +299,7 @@ func (s *matchService) getUserRatingInfo(ctx context.Context, tx *sql.Tx, uid in
 	err := tx.QueryRowContext(ctx, "SELECT rank_score, wins_count FROM users WHERE uid = ? AND deleted_at IS NULL", uid).Scan(&info.RankScore, &info.WinsCount)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			// 用户不存在则自动创建 (EnsureUser 逻辑)
-			_, err = tx.ExecContext(ctx, "INSERT IGNORE INTO users (uid) VALUES (?)", uid)
-			if err != nil {
-				return nil, err
-			}
-			return &userRatingInfo{RankScore: 0, WinsCount: 0}, nil
+			return nil, fmt.Errorf("用户 (uid: %d) 在本地系统中不存在", uid)
 		}
 		return nil, err
 	}

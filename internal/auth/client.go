@@ -328,6 +328,40 @@ func (c *Client) LookupUserByUsername(username string) (uid int64, uname string,
 	}
 }
 
+// LookupUserByUUID 通过 UUID 查找 HRPAuth 用户并获取 UID。
+// 调用 POST /user/lookup-uuid（公开端点，无需鉴权）。
+//
+//	200 → (uid, nil)
+//	404 → (0, ErrUserNotFound)
+//	其他 → (0, ErrUpstream)
+func (c *Client) LookupUserByUUID(uuid string) (uid int64, err error) {
+	resp, err := c.doPost("/user/lookup-uuid", map[string]string{
+		"uuid": uuid,
+	})
+	if err != nil {
+		return 0, ErrUpstream
+	}
+	defer resp.Body.Close()
+
+	switch resp.StatusCode {
+	case 200:
+		var result struct {
+			UID int64 `json:"uid"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+			return 0, fmt.Errorf("解析 lookup-uuid 响应失败: %w", err)
+		}
+		if result.UID == 0 {
+			return 0, ErrUserNotFound
+		}
+		return result.UID, nil
+	case 404:
+		return 0, ErrUserNotFound
+	default:
+		return 0, ErrUpstream
+	}
+}
+
 // tokenResponse 是 HRPAuth /oauth/token 和 /totp/verify 的通用响应。
 type tokenResponse struct {
 	AccessToken  string `json:"access_token"`
