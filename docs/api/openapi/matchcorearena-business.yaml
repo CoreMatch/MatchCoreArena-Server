@@ -634,7 +634,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/MatchReportInput'
+              $ref: '#/components/schemas/TeamReportInput'
       responses:
         '201':
           description: Match recorded
@@ -1024,39 +1024,22 @@ components:
           format: date-time
 
     # ─── Matches ───────────────────────────────────────────────────────────
-    MatchReportInput:
+    TeamReportInput:
       type: object
-      required: [match_type, winner_uid, loser_uid, started_at, finished_at]
+      required: [match_type, winner_team, loser_teams, started_at, finished_at]
       properties:
         match_type:
           type: string
-          description: Match type (e.g. "1v1", "2v2")
-        winner_uid:
-          type: integer
-          format: int64
-        loser_uid:
-          type: integer
-          format: int64
-        winner_score:
-          type: integer
-          default: 0
-        loser_score:
-          type: integer
-          default: 0
-        winner_perf:
-          type: number
-          format: double
-          default: 1.0
-          description: Winner performance weight (e.g. 1.05 for MVP)
-        loser_perf:
-          type: number
-          format: double
-          default: 1.0
-          description: Loser performance weight
+          description: Match type (e.g. "1v1", "2v2", "4v4v4v4")
+        winner_team:
+          $ref: '#/components/schemas/TeamReportInfo'
+        loser_teams:
+          type: array
+          items:
+            $ref: '#/components/schemas/TeamReportInfo'
         duration_seconds:
           type: integer
           default: 0
-          description: Match duration in seconds
         started_at:
           type: string
           format: date-time
@@ -1064,35 +1047,57 @@ components:
           type: string
           format: date-time
 
+    TeamReportInfo:
+      type: object
+      required: [team_id, members]
+      properties:
+        team_id:
+          type: string
+        initial_count:
+          type: integer
+          description: Team initial member count
+        alive_count:
+          type: integer
+          description: Team survivor count at match end
+        members:
+          type: array
+          items:
+            $ref: '#/components/schemas/ParticipantReport'
+
+    ParticipantReport:
+      type: object
+      required: [uid]
+      properties:
+        uid:
+          type: integer
+          format: int64
+        survival_time:
+          type: integer
+          description: Individual survival time in seconds
+        kills:
+          type: integer
+        deaths:
+          type: integer
+        perf_tweak:
+          type: number
+          format: double
+          default: 1.0
+          description: Individual performance tweak coefficient [0.95, 1.05]
+
     Match:
       type: object
-      required: [id, match_type, winner_uid, loser_uid, winner_score, loser_score, duration_seconds, started_at, finished_at, created_at]
+      required: [id, match_type, winner_team_id, survival_rate, duration_seconds, started_at, finished_at, created_at]
       properties:
         id:
           type: integer
           format: int64
         match_type:
           type: string
-        winner_uid:
-          type: integer
-          format: int64
-        loser_uid:
-          type: integer
-          format: int64
-        winner_score:
-          type: integer
-        loser_score:
-          type: integer
-        winner_perf:
+        winner_team_id:
+          type: string
+        survival_rate:
           type: number
           format: double
-        loser_perf:
-          type: number
-          format: double
-        winner_delta:
-          type: integer
-        loser_delta:
-          type: integer
         duration_seconds:
           type: integer
         started_at:

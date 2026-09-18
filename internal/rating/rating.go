@@ -36,21 +36,49 @@ func GetKFactor(wins int) float64 {
 	return (KStabilityMin + KStabilityMax) / 2.0
 }
 
-// GetRoundWeight 获取回合差权重 (W_round)
-func GetRoundWeight(winnerScore, loserScore int) float64 {
-	diff := int(math.Abs(float64(winnerScore - loserScore)))
-	switch {
-	case diff <= 1:
-		return 1.00
-	case diff <= 3:
-		return 1.05
-	case diff <= 6:
-		return 1.10
-	case diff <= 10:
-		return 1.20
-	default:
-		return 1.30
+// GetSurvivalWeight 获取基于团队生存比例的回合权重 (W_round)
+// survivorCount: 获胜队最终存活人数
+// initialCount: 获胜队初始人数
+func GetSurvivalWeight(survivorCount, initialCount int) float64 {
+	if initialCount <= 0 {
+		return 1.0
 	}
+	rate := float64(survivorCount) / float64(initialCount)
+	switch {
+	case rate <= 0.25:
+		return 1.00 // 惨胜
+	case rate <= 0.5:
+		return 1.05
+	case rate <= 0.75:
+		return 1.15
+	default:
+		return 1.25 // 完胜
+	}
+}
+
+// CalculateTeamAverageRating 计算团队平均评分
+func CalculateTeamAverageRating(ratings []float64) float64 {
+	if len(ratings) == 0 {
+		return 0
+	}
+	sum := 0.0
+	for _, r := range ratings {
+		sum += r
+	}
+	return sum / float64(len(ratings))
+}
+
+// GetIndividualPerformanceTweak 获取个人表现微调系数 (±5%)
+// 基于个人贡献（如存活时长、KDA等）与团队平均水平的对比
+// 这里简化为由上报者计算后的综合表现值 perf，范围建议在 [0.95, 1.05]
+func GetIndividualPerformanceTweak(perf float64) float64 {
+	if perf < 0.95 {
+		return 0.95
+	}
+	if perf > 1.05 {
+		return 1.05
+	}
+	return perf
 }
 
 // GetStreakWeight 获取连胜/连败权重 (W_streak)

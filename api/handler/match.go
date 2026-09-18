@@ -31,9 +31,9 @@ func (h *MatchHandler) Report(c *gin.Context) {
 
 	uid := middleware.GetUID(c)
 
-	var body service.ReportInput
+	var body service.TeamReportInput
 	if err := c.ShouldBindJSON(&body); err != nil {
-		response.FailCode(c, apperr.CodeMCAInvalidRequest, "请求参数不完整: "+err.Error())
+		response.FailCode(c, apperr.CodeMCAInvalidRequest, "请求参数格式错误: "+err.Error())
 		return
 	}
 
@@ -42,7 +42,7 @@ func (h *MatchHandler) Report(c *gin.Context) {
 		response.Fail(c, "上报对战结果失败", err)
 		return
 	}
-	response.Created(c, "对战结果已记录", m)
+	response.Created(c, "团队对战结果已记录", m)
 }
 
 // GetByID GET /api/matches/:id
