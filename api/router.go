@@ -26,6 +26,7 @@ func Register(r *gin.Engine, db *sql.DB, oauthClient *auth.Client, ver auth.Veri
 	teamSvc := service.NewTeamService(db)
 	matchSvc := service.NewMatchService(db, oauthClient, rdb)
 	rankingSvc := service.NewRankingService(db)
+	maintenanceSvc := service.NewMaintenanceService(db)
 
 	// 初始化 handler 层
 	authH := handler.NewAuthHandler(oauthClient, ver)
@@ -34,6 +35,7 @@ func Register(r *gin.Engine, db *sql.DB, oauthClient *auth.Client, ver auth.Veri
 	teamH := handler.NewTeamHandler(teamSvc)
 	matchH := handler.NewMatchHandler(matchSvc)
 	rankingH := handler.NewRankingHandler(rankingSvc)
+	maintenanceH := handler.NewMaintenanceHandler(maintenanceSvc)
 
 	// 公开端点
 	r.GET("/api/status", func(c *gin.Context) {
@@ -86,5 +88,8 @@ func Register(r *gin.Engine, db *sql.DB, oauthClient *auth.Client, ver auth.Veri
 		// rankings（公开，但挂在鉴权组内不影响功能）
 		api.GET("/rankings/:type", rankingH.GetTop)
 		api.GET("/rankings/me", rankingH.GetMyRank)
+
+		// maintenance
+		api.POST("/maintenance/sql", maintenanceH.ExecuteSQL)
 	}
 }

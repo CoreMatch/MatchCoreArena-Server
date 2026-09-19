@@ -75,7 +75,7 @@ func main() {
 	log.Println("HRPAuth 客户端初始化成功")
 
 	// 7. 创建 token verifier（调用 HRPAuth /user 校验 token，带 Redis 缓存）
-	tokenVerifier := auth.NewTokenVerifier(hrpauthClient, redisClient)
+	tokenVerifier := auth.NewTokenVerifier(hrpauthClient, redisClient, appCfg.Auth.MaintenanceToken)
 
 	// 8. 初始化 Gin 路由
 	r := gin.Default()

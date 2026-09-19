@@ -25,7 +25,7 @@ import (
 //  1. 将 CurrentVersion 提升到新版本；
 //  2. 在 migrations 列表中追加对应的迁移函数；
 //  3. 在 config.example.yaml 中同步更新。
-const CurrentVersion = "1.3.0"
+const CurrentVersion = "1.4.0"
 
 // AppConfig 应用配置根结构。
 type AppConfig struct {
@@ -38,7 +38,8 @@ type AppConfig struct {
 
 // AuthConfig 认证配置。
 type AuthConfig struct {
-	HRPAuth HRPAuthConfig `yaml:"hrpauth"`
+	HRPAuth          HRPAuthConfig `yaml:"hrpauth"`
+	MaintenanceToken string        `yaml:"maintenance_token"` // 运维超级凭据，拥有所有权限
 }
 
 // HRPAuthConfig HRPAuth IdP 配置。
@@ -159,6 +160,22 @@ var migrations = []migration{
 				hrpauthRaw["public_client_id"] = "hrpauth-webui"
 			}
 			authRaw["hrpauth"] = hrpauthRaw
+			in["auth"] = authRaw
+			return in, nil
+		},
+	},
+	{
+		from: "1.3.0",
+		to:   "1.4.0",
+		run: func(in rawConfig) (rawConfig, error) {
+			authRaw, _ := in["auth"].(map[string]any)
+			if authRaw == nil {
+				authRaw = map[string]any{}
+			}
+			// 添加 maintenance_token，默认空
+			if _, ok := authRaw["maintenance_token"]; !ok {
+				authRaw["maintenance_token"] = ""
+			}
 			in["auth"] = authRaw
 			return in, nil
 		},

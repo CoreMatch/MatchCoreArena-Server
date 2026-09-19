@@ -26,18 +26,31 @@ type Verifier interface {
 // 使用玩家自身的 Bearer token 调用 HRPAuth，无需 service token。
 // 校验结果缓存到 Redis 以减少对 HRPAuth 的调用。
 type TokenVerifier struct {
-	client *Client
-	redis  *goredis.Client
+	client           *Client
+	redis            *goredis.Client
+	maintenanceToken string
 }
 
 // NewTokenVerifier 创建 TokenVerifier。
-func NewTokenVerifier(client *Client, redis *goredis.Client) *TokenVerifier {
-	return &TokenVerifier{client: client, redis: redis}
+func NewTokenVerifier(client *Client, redis *goredis.Client, maintenanceToken string) *TokenVerifier {
+	return &TokenVerifier{
+		client:           client,
+		redis:            redis,
+		maintenanceToken: maintenanceToken,
+	}
 }
 
 // Verify 通过 HRPAuth /user 校验 token 并提取 uid。
 // 结果缓存5分钟。
 func (v *TokenVerifier) Verify(ctx context.Context, token string) (*TokenResult, error) {
+	// 0. 校验是否为运维超级凭据
+	if v.maintenanceToken != "" && token == v.maintenanceToken {
+		return &TokenResult{
+			UID:    -1, // 运维专用 UID
+			Scopes: []string{"maintenance"},
+		}, nil
+	}
+
 	// 1. Redis 缓存
 	cacheKey := "mca:token_verify:" + token
 	if v.redis != nil {

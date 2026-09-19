@@ -101,10 +101,11 @@ func GetAccessToken(c *gin.Context) string {
 }
 
 // HasScope 检查当前请求是否包含指定 scope。
+// 如果用户持有 maintenance 权限，则默认拥有所有权限。
 func HasScope(c *gin.Context, requiredScope string) bool {
 	scopes := GetScopes(c)
 	for _, s := range scopes {
-		if s == requiredScope {
+		if s == "maintenance" || s == requiredScope {
 			return true
 		}
 	}
