@@ -11,6 +11,8 @@
 package config
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -172,9 +174,9 @@ var migrations = []migration{
 			if authRaw == nil {
 				authRaw = map[string]any{}
 			}
-			// 添加 maintenance_token，默认空
+			// 添加 maintenance_token，如果不存在则生成随机值
 			if _, ok := authRaw["maintenance_token"]; !ok {
-				authRaw["maintenance_token"] = ""
+				authRaw["maintenance_token"] = generateRandomToken(32)
 			}
 			in["auth"] = authRaw
 			return in, nil
@@ -349,9 +351,10 @@ func createDefaultConfig(path string) error {
 		},
 		Auth: AuthConfig{
 			HRPAuth: HRPAuthConfig{
-				BaseURL:        "http://localhost:8080",
+				BaseURL:        "http://localhost:2778",
 				PublicClientID: "hrpauth-webui",
 			},
+			MaintenanceToken: generateRandomToken(32),
 		},
 	}
 
@@ -407,4 +410,13 @@ func compareSemVer(a, b string) int {
 		}
 	}
 	return 0
+}
+
+// generateRandomToken 生成指定字节长度的随机 16 进制字符串。
+func generateRandomToken(n int) string {
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		return ""
+	}
+	return hex.EncodeToString(b)
 }

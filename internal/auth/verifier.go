@@ -29,14 +29,16 @@ type TokenVerifier struct {
 	client           *Client
 	redis            *goredis.Client
 	maintenanceToken string
+	tokenStore       *TokenStore
 }
 
 // NewTokenVerifier 创建 TokenVerifier。
-func NewTokenVerifier(client *Client, redis *goredis.Client, maintenanceToken string) *TokenVerifier {
+func NewTokenVerifier(client *Client, redis *goredis.Client, maintenanceToken string, tokenStore *TokenStore) *TokenVerifier {
 	return &TokenVerifier{
 		client:           client,
 		redis:            redis,
 		maintenanceToken: maintenanceToken,
+		tokenStore:       tokenStore,
 	}
 }
 
@@ -49,6 +51,16 @@ func (v *TokenVerifier) Verify(ctx context.Context, token string) (*TokenResult,
 			UID:    -1, // 运维专用 UID
 			Scopes: []string{"maintenance"},
 		}, nil
+	}
+
+	// 0.1 校验是否为高权限服务凭据 (tokens.yaml)
+	if v.tokenStore != nil {
+		if st, ok := v.tokenStore.FindByToken(token); ok {
+			return &TokenResult{
+				UID:    st.UID,
+				Scopes: st.Scopes,
+			}, nil
+		}
 	}
 
 	// 1. Redis 缓存

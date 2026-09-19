@@ -1,0 +1,19 @@
+# MatchCoreArena 高权限服务凭据配置
+# 用于系统间调用、游戏服务器上报等场景，独立于 HRPAuth 用户体系。
+
+tokens:
+  match-reporter:
+    # 建议使用长随机字符串作为 token
+    token: "default-match-report-token-change-me"
+    # 虚拟独立 UID (建议使用负数以区分普通用户)
+    uid: -100
+    # 权限范围
+    scopes:
+      - "match:report"
+      - "user:read"
+
+  # stats-service:
+  #   token: "another-secure-token"
+  #   uid: -101
+  #   scopes:
+  #     - "user:read"

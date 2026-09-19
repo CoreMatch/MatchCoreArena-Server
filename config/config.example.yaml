@@ -32,5 +32,6 @@ auth:
     # OAuth2 public client_id，用于 refresh_token 等第一方流程。
     # 默认值与 HRPAuth 配置对齐（hrpauth-webui）。
     public_client_id: "hrpauth-webui"
-  # 运维超级凭据，拥有所有权限（可选，生产环境建议设置）
+  # 运维超级凭据，拥有所有权限。
+  # 首次创建配置文件时会自动生成一个 64 位随机 16 进制字符串。
   maintenance_token: ""

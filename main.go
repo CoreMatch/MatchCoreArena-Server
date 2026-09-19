@@ -74,10 +74,16 @@ func main() {
 	}
 	log.Println("HRPAuth 客户端初始化成功")
 
-	// 7. 创建 token verifier（调用 HRPAuth /user 校验 token，带 Redis 缓存）
-	tokenVerifier := auth.NewTokenVerifier(hrpauthClient, redisClient, appCfg.Auth.MaintenanceToken)
+	// 7. 加载高权限服务凭据 (tokens.yaml)
+	tokenStore, err := auth.LoadTokenStore("config/tokens.yaml")
+	if err != nil {
+		log.Printf("警告: 加载 tokens.yaml 失败 (可能不存在): %v", err)
+	}
 
-	// 8. 初始化 Gin 路由
+	// 8. 创建 token verifier（支持 HRPAuth、运维 Token 和 Service Token）
+	tokenVerifier := auth.NewTokenVerifier(hrpauthClient, redisClient, appCfg.Auth.MaintenanceToken, tokenStore)
+
+	// 9. 初始化 Gin 路由
 	r := gin.Default()
 	api.Register(r, db, hrpauthClient, tokenVerifier, redisClient, appCfg.Version)
 
