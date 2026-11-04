@@ -10,6 +10,7 @@ import (
 
 	goredis "github.com/redis/go-redis/v9"
 
+	"MatchCoreArena-Server/internal/apperr"
 	"MatchCoreArena-Server/internal/auth"
 	"MatchCoreArena-Server/internal/rating"
 )
@@ -299,7 +300,12 @@ func (s *matchService) getUserRatingInfo(ctx context.Context, tx *sql.Tx, uid in
 	err := tx.QueryRowContext(ctx, "SELECT rank_score, wins_count FROM users WHERE uid = ? AND deleted_at IS NULL", uid).Scan(&info.RankScore, &info.WinsCount)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return nil, fmt.Errorf("用户 (uid: %d) 在本地系统中不存在", uid)
+			// 参与者已通过 HRPAuth 解析出 uid，但本地 users 行缺失：
+			// 这是数据未建行（状态不一致），不是内部故障，返回类型化错误
+			// 以便运维区分。建行机制本身待作者决策（PENDING-DECISIONS 第 4 条），
+			// 此处不做自动建行。
+			return nil, apperr.New(apperr.CodeMCAUserNotProvisioned,
+				fmt.Sprintf("参与者 (uid: %d) 本地 users 行缺失，档案未建立", uid))
 		}
 		return nil, err
 	}

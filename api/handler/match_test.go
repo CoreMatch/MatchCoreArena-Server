@@ -12,6 +12,7 @@ import (
 
 	"MatchCoreArena-Server/api/handler"
 	"MatchCoreArena-Server/api/middleware"
+	"MatchCoreArena-Server/internal/apperr"
 	"MatchCoreArena-Server/internal/auth"
 	"MatchCoreArena-Server/internal/service"
 )
@@ -40,12 +41,16 @@ type fakeMatchService struct {
 	reportCalls int
 	lastUID     int64
 	lastInput   service.TeamReportInput
+	reportErr   error // 非 nil 时 Report 返回该错误
 }
 
 func (f *fakeMatchService) Report(_ context.Context, uid int64, in service.TeamReportInput) (*service.Match, error) {
 	f.reportCalls++
 	f.lastUID = uid
 	f.lastInput = in
+	if f.reportErr != nil {
+		return nil, f.reportErr
+	}
 	return &service.Match{ID: 42, MatchType: in.MatchType}, nil
 }
 
@@ -248,4 +253,27 @@ func TestMatchReportScopeMatrix(t *testing.T) {
 			t.Fatalf("code = %q, want mca_invalid_request", code)
 		}
 	})
+}
+
+// TestMatchReportMissingUsersRowMapping 钉住"参与者缺本地 users 行"的
+// 对外错误形态：类型化的 mca_user_not_provisioned + 409，而不是裸
+// internal_error + 500（运维据此区分数据缺行与真故障）。建行机制本身
+// 待作者决策（PENDING-DECISIONS 第 4 条），此测试只钉错误映射。
+func TestMatchReportMissingUsersRowMapping(t *testing.T) {
+	svc := &fakeMatchService{
+		reportErr: apperr.New(apperr.CodeMCAUserNotProvisioned,
+			"参与者 (uid: 7) 本地 users 行缺失，档案未建立"),
+	}
+	r := newMatchRouter(newScopeVerifier(), svc)
+
+	w := doMatch(t, r, "tok-report", validReportBody)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409 (body=%s)", w.Code, w.Body.String())
+	}
+	if code := assertEnvelope(t, w); code != "mca_user_not_provisioned" {
+		t.Fatalf("code = %q, want mca_user_not_provisioned", code)
+	}
+	if svc.reportCalls != 1 {
+		t.Fatalf("expected Report to be called once, got %d", svc.reportCalls)
+	}
 }

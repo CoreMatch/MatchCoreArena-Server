@@ -30,6 +30,7 @@ const (
 	// 本服务业务错误码
 	CodeMCAInvalidRequest      Code = "mca_invalid_request"
 	CodeMCAUserNotFound        Code = "mca_user_not_found"
+	CodeMCAUserNotProvisioned  Code = "mca_user_not_provisioned"
 	CodeMCAFriendNotFound      Code = "mca_friend_not_found"
 	CodeMCAFriendRequestExists Code = "mca_friend_request_exists"
 	CodeMCATeamNotFound        Code = "mca_team_not_found"
@@ -53,6 +54,7 @@ var codeHTTPMap = map[Code]int{
 	CodeInternal:               http.StatusInternalServerError,
 	CodeMCAInvalidRequest:      http.StatusBadRequest,
 	CodeMCAUserNotFound:        http.StatusNotFound,
+	CodeMCAUserNotProvisioned:  http.StatusConflict,
 	CodeMCAFriendNotFound:      http.StatusNotFound,
 	CodeMCAFriendRequestExists: http.StatusConflict,
 	CodeMCATeamNotFound:        http.StatusNotFound,
