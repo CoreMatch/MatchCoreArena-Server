@@ -45,8 +45,8 @@ func TestLoad_CreatesDefaultConfigWhenMissing(t *testing.T) {
 	if cfg.Database.Name != "matchcorearena" {
 		t.Errorf("数据库名称不匹配: 期望 matchcorearena, 实际 %s", cfg.Database.Name)
 	}
-	if cfg.Auth.HRPAuth.BaseURL != "http://localhost:8080" {
-		t.Errorf("HRPAuth BaseURL 不匹配: 期望 http://localhost:8080, 实际 %s", cfg.Auth.HRPAuth.BaseURL)
+	if cfg.Auth.HRPAuth.BaseURL != "http://localhost:2778" {
+		t.Errorf("HRPAuth BaseURL 不匹配: 期望 http://localhost:2778, 实际 %s", cfg.Auth.HRPAuth.BaseURL)
 	}
 }
 
@@ -95,9 +95,9 @@ auth:
 		t.Fatalf("加载配置失败: %v", err)
 	}
 
-	// 验证配置内容
-	if cfg.Version != "1.2.0" {
-		t.Errorf("版本号不匹配: 期望 1.2.0, 实际 %s", cfg.Version)
+	// 验证配置内容（Load 会把旧版本配置迁移到 CurrentVersion）
+	if cfg.Version != CurrentVersion {
+		t.Errorf("版本号不匹配: 期望 %s, 实际 %s", CurrentVersion, cfg.Version)
 	}
 	if cfg.Server.Host != "127.0.0.1" {
 		t.Errorf("服务器主机不匹配: 期望 127.0.0.1, 实际 %s", cfg.Server.Host)
