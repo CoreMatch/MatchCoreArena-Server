@@ -24,7 +24,7 @@ const (
 	CodeOAuthRefreshFailed     Code = "oauth_refresh_failed"
 	CodeOAuthRevokeFailed      Code = "oauth_revoke_failed"
 	CodeOAuthRateLimited       Code = "oauth_rate_limited"
-	CodeOAuthHRPAuthDown       Code = "oauth_hrpaauth_down"
+	CodeOAuthHRPAuthDown       Code = "oauth_hrpauth_down"
 	CodeInternal               Code = "internal_error"
 
 	// 本服务业务错误码
