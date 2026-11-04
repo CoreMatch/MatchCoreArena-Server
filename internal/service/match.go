@@ -307,12 +307,16 @@ func (s *matchService) getUserRatingInfo(ctx context.Context, tx *sql.Tx, uid in
 }
 
 func (s *matchService) getUserStreak(ctx context.Context, tx *sql.Tx, uid int64) (int, error) {
-	// 获取最近 10 场对战结果来计算连胜/连败
+	// 获取最近 10 场对战结果来计算连胜/连败。
+	// 团队对战的胜负按玩家记录在 match_participants（matches 主表的
+	// winner_uid/loser_uid 不随上报写入），因此以参与者记录为准。
 	rows, err := tx.QueryContext(ctx,
-		`SELECT winner_uid FROM matches 
-		 WHERE (winner_uid = ? OR loser_uid = ?) 
-		 ORDER BY created_at DESC LIMIT 10`,
-		uid, uid,
+		`SELECT mp.is_winner
+		 FROM match_participants mp
+		 JOIN matches m ON mp.match_id = m.id
+		 WHERE mp.user_uid = ?
+		 ORDER BY m.created_at DESC, mp.id DESC LIMIT 10`,
+		uid,
 	)
 	if err != nil {
 		return 0, err
@@ -324,12 +328,12 @@ func (s *matchService) getUserStreak(ctx context.Context, tx *sql.Tx, uid int64)
 	winning := false
 
 	for rows.Next() {
-		var winnerUID int64
-		if err := rows.Scan(&winnerUID); err != nil {
+		var isWinner bool
+		if err := rows.Scan(&isWinner); err != nil {
 			return 0, err
 		}
 
-		isWin := winnerUID == uid
+		isWin := isWinner
 		if isFirst {
 			winning = isWin
 			streak = 1
