@@ -149,3 +149,50 @@ func TestLoad_CreatesDirectoryIfMissing(t *testing.T) {
 		t.Errorf("版本号不匹配: 期望 %s, 实际 %s", CurrentVersion, cfg.Version)
 	}
 }
+
+func TestLoad_TokensPath(t *testing.T) {
+	base := `version: "1.4.0"
+server:
+  host: "127.0.0.1"
+  port: 8080
+database:
+  host: "db.example.com"
+  port: 3306
+  user: "u"
+  password: "p"
+  name: "d"
+redis:
+  host: "redis.example.com"
+  port: 6379
+auth:
+  hrpauth:
+    base_url: "https://auth.example.com"
+  maintenance_token: "t"
+`
+	// 显式 tokens_path 被解析。
+	tmpDir := t.TempDir()
+	explicit := filepath.Join(tmpDir, "explicit.yaml")
+	if err := os.WriteFile(explicit, []byte(base+"  tokens_path: /data/tokens.yaml\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(explicit)
+	if err != nil {
+		t.Fatalf("Load explicit: %v", err)
+	}
+	if cfg.Auth.TokensPath != "/data/tokens.yaml" {
+		t.Errorf("tokens_path = %q, want /data/tokens.yaml", cfg.Auth.TokensPath)
+	}
+
+	// 未配置时保持空值（运行期回落到默认 config/tokens.yaml）。
+	missing := filepath.Join(tmpDir, "missing.yaml")
+	if err := os.WriteFile(missing, []byte(base), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cfg2, err := Load(missing)
+	if err != nil {
+		t.Fatalf("Load missing: %v", err)
+	}
+	if cfg2.Auth.TokensPath != "" {
+		t.Errorf("tokens_path should default to empty, got %q", cfg2.Auth.TokensPath)
+	}
+}

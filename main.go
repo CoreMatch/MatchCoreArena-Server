@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"os"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
@@ -75,7 +76,15 @@ func main() {
 	log.Println("HRPAuth 客户端初始化成功")
 
 	// 7. 加载高权限服务凭据 (tokens.yaml)
-	tokenStore, err := auth.LoadTokenStore("config/tokens.yaml")
+	// 路径优先级：环境变量 MCA_TOKENS_PATH > 配置 auth.tokens_path > 默认值。
+	tokensPath := appCfg.Auth.TokensPath
+	if tokensPath == "" {
+		tokensPath = "config/tokens.yaml"
+	}
+	if v := os.Getenv("MCA_TOKENS_PATH"); v != "" {
+		tokensPath = v
+	}
+	tokenStore, err := auth.LoadTokenStore(tokensPath)
 	if err != nil {
 		log.Printf("警告: 加载 tokens.yaml 失败 (可能不存在): %v", err)
 	}

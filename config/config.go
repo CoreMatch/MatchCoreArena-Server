@@ -42,6 +42,10 @@ type AppConfig struct {
 type AuthConfig struct {
 	HRPAuth          HRPAuthConfig `yaml:"hrpauth"`
 	MaintenanceToken string        `yaml:"maintenance_token"` // 运维超级凭据，拥有所有权限
+	// TokensPath 高权限服务凭据文件 (tokens.yaml) 路径。
+	// 留空时默认 "config/tokens.yaml"（相对工作目录，保持历史行为）；
+	// 可用环境变量 MCA_TOKENS_PATH 覆盖（优先级最高）。
+	TokensPath string `yaml:"tokens_path"`
 }
 
 // HRPAuthConfig HRPAuth IdP 配置。
