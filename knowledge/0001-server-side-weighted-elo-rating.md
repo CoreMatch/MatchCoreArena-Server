@@ -58,21 +58,21 @@ file and its content was not verified for this entry.
     the authenticated group, so a valid token is in fact required.
 
 ## Evidence
-- internal/rating/rating.go:7-17 — constants incl. "CS2 Premier Rating research report" comment
-- internal/rating/rating.go:21-23 — Elo expected score
-- internal/rating/rating.go:27-37 — phase-based K-factor
-- internal/rating/rating.go:42-57 — survival weight
-- internal/rating/rating.go:86-107 — streak weight
-- internal/rating/rating.go:111-114 — delta formula
+- internal/rating/rating.go::KPlacementStart — constants incl. "CS2 Premier Rating research report" comment
+- internal/rating/rating.go::CalculateEloExpected — Elo expected score
+- internal/rating/rating.go::GetKFactor — phase-based K-factor
+- internal/rating/rating.go::GetSurvivalWeight — survival weight
+- internal/rating/rating.go::GetStreakWeight — streak weight
+- internal/rating/rating.go::CalculateDelta — delta formula
 - internal/rating/rating_test.go — unit tests for the rating package (existence verified)
-- internal/service/match.go:100-263 — transactional report processing
-- internal/service/match.go:206 — rank_score floor at 0
-- internal/service/match.go:231, 353-369 — rankings upsert, season = 1
-- internal/service/match.go:309-351 — streak query over winner_uid/loser_uid
-- internal/service/match.go:152-157 — team-match INSERT omits winner_uid/loser_uid
-- migrate/migrations/baseline.sql:61-62 — winner_uid/loser_uid NOT NULL without default
-- internal/service/ranking.go:39-74 — real-time top-N query; scale caveat comment at lines 48-49
-- api/router.go:84-90 — match and ranking routes; "public" comment at line 88
+- internal/service/match.go::Report — transactional report processing
+- internal/service/match.go::scoreUpdate — rank_score floor at 0
+- internal/service/match.go::updateRanking — rankings upsert, season = 1
+- internal/service/match.go:L309-L351 @ eff17842a127f1f2aae984acd61fd343dd357b32 — streak query over winner_uid/loser_uid (snapshot before the 218bb99 rewrite)
+- internal/service/match.go::winner_team_id — team-match INSERT omits winner_uid/loser_uid
+- migrate/migrations/baseline.sql:L61-L62 @ 0950310aafaa90acddc5a45b4f477dd73f8e61d4 — winner_uid/loser_uid NOT NULL without default (snapshot before the eff1784 fix)
+- internal/service/ranking.go::GetTop — real-time top-N query; scale caveat comment inside GetTop
+- api/router.go:L84-L90 @ 218bb999472568105e1eaa8abc55abce97a57ad9 — match and ranking routes; "public" comment at line 88 (snapshot before the 61b960c correction)
 - research-推导三种对局情况的记分权重近似模型.pdf — binary research document, content not verified
 - commit bb8b7c6136b1cf98bc8a40bdbf8294aef2bd9137 — feat: implement elo ranking and match reporting (2026-09-12)
 - commit 6279658307d011791f3a15a166ae81caf1c7c5dd — feat(match): add team match support and participant tracking (2026-09-18)
