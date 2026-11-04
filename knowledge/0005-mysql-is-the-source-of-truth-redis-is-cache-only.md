@@ -18,10 +18,13 @@ was reworked several times on the first development day (numbered migration file
 - Schema bootstrapping is baseline-only: at startup the embedded `baseline.sql`
   runs if and only if the database contains zero tables. There is no migration
   version tracking table and no incremental migration runner.
-- Incremental schema changes ship as additional embedded SQL files (e.g. the
-  match-participants extension), but nothing in the code applies them to an
-  already-initialized database; they only take effect on a fresh database or when
-  executed manually (e.g. through the raw-SQL maintenance endpoint).
+- Incremental schema changes used to ship as additional embedded SQL files, but
+  nothing in the code ever applied them to an already-initialized database. The
+  only such file (the 2026-09-18 match-participants extension) was folded into
+  `baseline.sql` and deleted on 2026-11-04 because the report code path
+  requires those tables (see 0007). Schema changes therefore still take effect
+  only on a fresh database or when executed manually (e.g. through the raw-SQL
+  maintenance endpoint).
 - Redis is used strictly as a cache with TTLs, never as a source of truth:
   token verification results (5 min), UUID→UID mappings (24 h), and username
   lookups for friend requests (10 min). Leaderboards are read from MySQL, not
@@ -45,9 +48,8 @@ was reworked several times on the first development day (numbered migration file
 - migrate/migrate.go:35-76 — baseline runs only; no version tracking
 - migrate/migrate.go:79-86 — isInitialized: skip when any table exists
 - migrate/embed.go:1-6 — `//go:embed migrations/*.sql`
-- migrate/migrations/baseline.sql:1-88 — initial schema (users, friends, teams, team_members, matches, rankings)
-- migrate/migrations/20260918_add_match_participants.sql:1-21 — match_participants table + matches extensions
-- Repository-wide search for `20260918` / `add_match_participants` outside the file itself: no matches — the incremental file is not referenced by any runner
+- migrate/migrations/baseline.sql:1-108 — full schema (users, friends, teams, team_members, matches, match_participants, rankings); since 2026-11-04 this includes the match_participants table and the matches.winner_team_id / survival_rate columns
+- migrate/migrations/20260918_add_match_participants.sql — formerly embedded but referenced by no runner; folded into baseline.sql and deleted on 2026-11-04 (commit eff1784, see 0007)
 - internal/auth/verifier.go:67-75, 94 — token verification cache, 5-minute TTL
 - internal/service/match.go:273-291 — UUID→UID cache, 24-hour TTL
 - api/handler/friend.go:62-91 — username lookup cache, 10-minute TTL
