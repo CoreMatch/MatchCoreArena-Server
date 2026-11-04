@@ -85,7 +85,7 @@ func Register(r *gin.Engine, db *sql.DB, oauthClient *auth.Client, ver auth.Veri
 		api.GET("/matches/:id", matchH.GetByID)
 		api.GET("/matches/me", matchH.ListByMe)
 
-		// rankings（公开，但挂在鉴权组内不影响功能）
+		// rankings（需要鉴权：与该组其他端点一致）
 		api.GET("/rankings/:type", rankingH.GetTop)
 		api.GET("/rankings/me", rankingH.GetMyRank)
 

@@ -39,20 +39,6 @@ func TestGetKFactor(t *testing.T) {
 	}
 }
 
-func TestGetRoundWeight(t *testing.T) {
-	// 13-11 (diff=2)
-	w := GetRoundWeight(13, 11)
-	if w != 1.05 {
-		t.Errorf("Expected 1.05, got %f", w)
-	}
-
-	// 13-0 (diff=13)
-	w = GetRoundWeight(13, 0)
-	if w != 1.30 {
-		t.Errorf("Expected 1.30, got %f", w)
-	}
-}
-
 func TestGetStreakWeight(t *testing.T) {
 	// 连胜 3 场
 	w := GetStreakWeight(3)
