@@ -50,7 +50,7 @@ type AuthConfig struct {
 
 // HRPAuthConfig HRPAuth IdP 配置。
 type HRPAuthConfig struct {
-	BaseURL        string `yaml:"base_url"`         // HRPAuth 根地址，如 http://localhost:8080
+	BaseURL        string `yaml:"base_url"`         // HRPAuth 根地址，如 http://localhost:2778
 	PublicClientID string `yaml:"public_client_id"` // OAuth2 public client_id，用于 refresh_token 等第一方流程
 }
 
