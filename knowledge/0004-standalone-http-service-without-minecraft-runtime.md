@@ -41,12 +41,12 @@ MCA is a plain, self-contained HTTP service written in Go:
     documented in repo (the repository has no README); pending author confirmation.
 
 ## Evidence
-- go.mod:1-11 — module dependencies: gin, go-sql-driver/mysql, go-yaml, google/uuid, go-redis; nothing Minecraft-related
-- main.go:18-95 — startup sequence (config, migrations, MySQL, Redis, HRPAuth client, Gin)
-- config/config.example.yaml:6-8 — default listen port 9178
-- Dockerfile:10 — `CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/mca .`
-- Dockerfile:12-24 — alpine runtime, non-root `app` user, EXPOSE 9178
-- Absence of Minecraft/Yggdrasil code: repository-wide search matches only the `mojang_uuid` pass-through field (internal/auth/client.go:68, internal/auth/types.go:10)
+- go.mod (field: require) — module dependencies: gin, go-sql-driver/mysql, go-yaml, google/uuid, go-redis; nothing Minecraft-related
+- main.go::main — startup sequence (config, migrations, MySQL, Redis, HRPAuth client, Gin)
+- config/config.example.yaml (field: port) — default listen port 9178
+- Dockerfile::CGO_ENABLED — `CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/mca .`
+- Dockerfile::alpine — alpine runtime, non-root `app` user, EXPOSE 9178
+- Absence of Minecraft/Yggdrasil code: repository-wide search matches only the `mojang_uuid` pass-through field (internal/auth/client.go::mojang_uuid, internal/auth/types.go::MojangUUID)
 - commit 2f16bac2e319220d915ac2da565e94ce7ef3ad1e — feat: add initial MatchCoreArena server setup (2026-09-11)
 - commit 787deb65d1525e9c0d2c39778d67e1de05796cc4 — feat: add initial MatchCoreArena server project skeleton (2026-09-11)
 - commit 2c6110936a1d55a8d0c09437fc5bf4aeb388b018 — feat(docker): add multi-stage container image build (2026-11-03)

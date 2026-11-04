@@ -44,16 +44,16 @@ was reworked several times on the first development day (numbered migration file
   - Ranking reads scale linearly with table size (see 0001).
 
 ## Evidence
-- main.go:41-55 — MySQL DSN (utf8mb4, parseTime) and pool setup
-- migrate/migrate.go:35-76 — baseline runs only; no version tracking
-- migrate/migrate.go:79-86 — isInitialized: skip when any table exists
-- migrate/embed.go:1-6 — `//go:embed migrations/*.sql`
-- migrate/migrations/baseline.sql:1-108 — full schema (users, friends, teams, team_members, matches, match_participants, rankings); since 2026-11-04 this includes the match_participants table and the matches.winner_team_id / survival_rate columns
-- migrate/migrations/20260918_add_match_participants.sql — formerly embedded but referenced by no runner; folded into baseline.sql and deleted on 2026-11-04 (commit eff1784, see 0007)
-- internal/auth/verifier.go:67-75, 94 — token verification cache, 5-minute TTL
-- internal/service/match.go:273-291 — UUID→UID cache, 24-hour TTL
-- api/handler/friend.go:62-91 — username lookup cache, 10-minute TTL
-- internal/service/ranking.go:48-56 — rankings served from MySQL; Redis ZSET noted as future work
+- main.go::parseTime — MySQL DSN (utf8mb4, parseTime) and pool setup
+- migrate/migrate.go::RunMigrations — baseline runs only; no version tracking
+- migrate/migrate.go::isInitialized — isInitialized: skip when any table exists
+- migrate/embed.go::MigrationsFS — `//go:embed migrations/*.sql`
+- migrate/migrations/baseline.sql::match_participants — full schema (users, friends, teams, team_members, matches, match_participants, rankings); since 2026-11-04 this includes the match_participants table and the matches.winner_team_id / survival_rate columns
+- migrate/migrations/20260918_add_match_participants.sql:L1 @ 0950310aafaa90acddc5a45b4f477dd73f8e61d4 — formerly embedded but referenced by no runner; folded into baseline.sql and deleted on 2026-11-04 (commit eff1784, see 0007)
+- internal/auth/verifier.go::Verify — token verification cache, 5-minute TTL
+- internal/service/match.go::resolveUID — UUID→UID cache, 24-hour TTL
+- api/handler/friend.go::Request — username lookup cache, 10-minute TTL
+- internal/service/ranking.go::GetTop — rankings served from MySQL; Redis ZSET noted as future work
 - commit afc83a654be30b28d420c13aba3bf04fb96d6ffd — feat: add database migrations and initial schema (2026-09-11)
 - commit 88dda2a47aed6fb400f6549caf9ba2a7ddbc2d29 — refactor: switch database migration to use baseline SQL (2026-09-11)
 - commit e9fb667eb7f535f6b55bd326b20e1b6102c0d70d — refactor: switch to embedded migrations and remove migrate config (2026-09-11)

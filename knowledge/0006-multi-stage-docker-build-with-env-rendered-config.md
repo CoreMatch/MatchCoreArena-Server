@@ -40,11 +40,11 @@ while the image itself should stay small and free of build tooling.
     health-check and restart policies are not defined in this repository.
 
 ## Evidence
-- Dockerfile:1-24 — multi-stage build, non-root user, EXPOSE 9178
-- docker-entrypoint.sh:1-10 — envsubst rendering of CONFIG_TEMPLATE → RENDERED_CONFIG, then exec
-- .dockerignore:1-18 — build context exclusions (existence verified)
-- config/config.go:190-210 — config path resolution and auto-creation when missing
-- config/config.go:329-359 — default config values incl. port 9178 and random maintenance token
-- config/config.example.yaml:6-8 — default server port 9178
+- Dockerfile::builder — multi-stage build, non-root user, EXPOSE 9178
+- docker-entrypoint.sh::envsubst — envsubst rendering of CONFIG_TEMPLATE → RENDERED_CONFIG, then exec
+- .dockerignore::build — build context exclusions (existence verified)
+- config/config.go::Load — config path resolution and auto-creation when missing
+- config/config.go::createDefaultConfig — default config values incl. port 9178 and random maintenance token
+- config/config.example.yaml (field: port) — default server port 9178
 - commit 2c6110936a1d55a8d0c09437fc5bf4aeb388b018 — feat(docker): add multi-stage container image build (2026-11-03)
 - Where production orchestration lives: not verified (no manifests in repo)

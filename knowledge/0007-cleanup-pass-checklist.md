@@ -48,14 +48,14 @@ migration file.
    `GetRoundWeight`, which does not exist (replaced by `GetSurvivalWeight`
    with different semantics), and made `go vet` / `go test` fail to compile.
 5. Stale config test expectations aligned (commit `2eb0ba1`): default HRPAuth
-   base URL is `http://localhost:2778` (`config/config.go:354`; 2778 is
-   HRPAuth's actual listen port), and `Load()` migrates older config files to
-   `CurrentVersion` (documented behavior in `config/config.go`).
+   base URL is `http://localhost:2778` [xref] (`config/config.go::createDefaultConfig`;
+   2778 is HRPAuth's actual listen port), and `Load()` migrates older
+   config files to `CurrentVersion` (documented behavior in `config/config.go`).
 
 ### Not fixed — requires author decision
 
 1. **`EnsureUser` is defined but never called**
-   (`internal/service/user.go:73`): match reports for users without a local
+   (`internal/service/user.go::EnsureUser`): match reports for users without a local
    `users` row fail with "用户在本地系统中不存在". Wiring `EnsureUser` into
    the auth or report flow changes behavior (who may create local user
    rows); deleting it removes a prepared API. Needs a direction.
@@ -98,9 +98,9 @@ migration file.
 - `61b960c` docs(api): correct rankings comment to match actual auth behavior
 - `3363e1d` test(rating): remove obsolete TestGetRoundWeight
 - `2eb0ba1` test(config): align stale expectations with current behavior
-- `migrate/migrations/baseline.sql:57-94` (matches + match_participants after the fix)
-- `internal/service/match.go:152-157` (report INSERT columns), `:309-355` (rewritten streak query)
-- `api/router.go:88-90` (rankings inside the authenticated group)
+- `migrate/migrations/baseline.sql::match_participants` (matches + match_participants after the fix)
+- `internal/service/match.go::winner_team_id` (report INSERT columns), `internal/service/match.go::getUserStreak` (rewritten streak query)
+- `api/router.go::Register` (rankings inside the authenticated group)
 - MariaDB 11.8.8 session 2026-11-04: new baseline accepted all report
   statements; old baseline returned `ERROR 1364 (HY000): Field 'winner_uid'
   doesn't have a default value` for the same INSERT.

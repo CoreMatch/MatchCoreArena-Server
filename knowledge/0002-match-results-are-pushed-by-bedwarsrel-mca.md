@@ -48,19 +48,19 @@ endpoint must be protected so that only trusted system callers can write ratings
   - A report fails as a whole if any participant cannot be resolved (see 0003).
 
 ## Evidence
-- api/router.go:84 — `POST /api/matches` route
-- api/handler/match.go:25-46 — scope check and report handling
-- api/middleware/auth.go:30-61 — Bearer token middleware
-- api/middleware/auth.go:105-113 — HasScope with `maintenance` bypass
-- internal/auth/verifier.go:47-98 — verification order (maintenance token, service tokens, Redis cache, HRPAuth)
-- internal/auth/tokens.go:56-69 — default token store incl. `match-reporter` (UID -100, scopes match:report/user:read)
-- config/tokens.yaml:1-13 — committed service-token file with placeholder token
-- internal/service/match.go:43-65 — TeamReportInput / TeamInfo / ParticipantReport shapes
+- api/router.go::Register — `POST /api/matches` route
+- api/handler/match.go::Report — scope check and report handling
+- api/middleware/auth.go::Auth — Bearer token middleware
+- api/middleware/auth.go::HasScope — HasScope with `maintenance` bypass
+- internal/auth/verifier.go::Verify — verification order (maintenance token, service tokens, Redis cache, HRPAuth)
+- internal/auth/tokens.go::createDefaultTokenStore — default token store incl. `match-reporter` (UID -100, scopes match:report/user:read)
+- config/tokens.yaml (field: match-reporter) — committed service-token file with placeholder token
+- internal/service/match.go::TeamReportInput — TeamReportInput / TeamInfo / ParticipantReport shapes
 - config/tokens.yaml:2 — comment stating service tokens serve cross-system calls such as game-server reporting, independent of HRPAuth users
-- BedwarsRel-MCA (read-only reference): common/src/main/java/io/github/bedwarsrel/utils/MatchReporter.java:36-62 — POST with Bearer token; :64-98 — JSON body; :128-153 — participant fields incl. hard-coded perf_tweak 1.0; :24-33 — fire-and-forget thread
-- BedwarsRel-MCA (read-only reference): common/src/main/java/io/github/bedwarsrel/game/GameCycle.java:290-298 — report triggered in runGameOver
-- BedwarsRel-MCA (read-only reference): common/src/main/resources/config.yml:966-971 — `match-reporting.api-url` (default https://api.matchcorearena.com/api/matches) and `access-token` placeholder
-- HA-Contract (read-only reference): docs/api/openapi/matchcorearena-business.yaml:630-656 — POST /api/matches contract (BearerAuth, 201); :1100-1158 — TeamReportInput/TeamReportInfo/ParticipantReport schemas; HA-Contract commit 309a888b00accea1e230476292301a70aa4c7a5f (2026-10-04)
+- BedwarsRel-MCA (read-only reference): /home/lnb/Desktop/HA/BedwarsRel-MCA/common/src/main/java/io/github/bedwarsrel/utils/MatchReporter.java::sendReport — POST with Bearer token; /home/lnb/Desktop/HA/BedwarsRel-MCA/common/src/main/java/io/github/bedwarsrel/utils/MatchReporter.java::buildJson — JSON body; /home/lnb/Desktop/HA/BedwarsRel-MCA/common/src/main/java/io/github/bedwarsrel/utils/MatchReporter.java::appendParticipantInfo — participant fields incl. hard-coded perf_tweak 1.0; /home/lnb/Desktop/HA/BedwarsRel-MCA/common/src/main/java/io/github/bedwarsrel/utils/MatchReporter.java::report — fire-and-forget thread
+- BedwarsRel-MCA (read-only reference): /home/lnb/Desktop/HA/BedwarsRel-MCA/common/src/main/java/io/github/bedwarsrel/game/GameCycle.java::runGameOver — report triggered in runGameOver
+- BedwarsRel-MCA (read-only reference): /home/lnb/Desktop/HA/BedwarsRel-MCA/common/src/main/resources/config.yml (field: match-reporting) — `match-reporting.api-url` (default https://api.matchcorearena.com/api/matches) and `access-token` placeholder
+- HA-Contract (read-only reference): /home/lnb/Desktop/HA/HA-Contract/docs/api/openapi/matchcorearena-business.yaml (field: /api/matches) — POST /api/matches contract (BearerAuth, 201); /home/lnb/Desktop/HA/HA-Contract/docs/api/openapi/matchcorearena-business.yaml::TeamReportInput — TeamReportInput/TeamReportInfo/ParticipantReport schemas; HA-Contract commit 309a888b00accea1e230476292301a70aa4c7a5f (2026-10-04)
 - commit 7dc243d8ba789ae9926865f516bdfa105e1164d5 — feat: implement match reporting flow and add OAuth scope checks (2026-09-11)
 - commit 6279658307d011791f3a15a166ae81caf1c7c5dd — feat(match): add team match support and participant tracking (2026-09-18)
 - commit 12dbd67a7e611e3d85e41844c398cd5d626b6ddd — feat(auth,config): add service token support and config improvements (2026-09-19)

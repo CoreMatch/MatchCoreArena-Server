@@ -23,7 +23,7 @@ Verified dependency boundary (all checks are repository-wide searches on the
   `POST /totp/verify`, `POST /oauth/token`, `POST /oauth/revoke`,
   `POST /user/lookup`, `POST /user/lookup-uuid`, and `POST /user` (token
   verification). Base URL comes from `auth.hrpauth.base_url`
-  (default `http://localhost:2778`, HRPAuth's actual listen port).
+  (default `http://localhost:2778`, HRPAuth's actual listen port). [xref]
 - **Inbound consumers** (registered routes, see 0002 for the reporter):
   BedwarsRel-MCA via `POST /api/matches`; MatchCoreArena-Client via the
   user-facing `/api/*` routes; MatchCoreArena-MaintenanceView via
@@ -52,11 +52,11 @@ Verified dependency boundary (all checks are repository-wide searches on the
   pending author confirmation.
 
 ## Evidence
-- internal/auth/client.go:33 (`GET /status`), :93 (`/oauth/login-ticket`), :127 (`/totp/verify`), :168 (`/oauth/token`), :207 (`/oauth/revoke`), :303 (`/user/lookup`), :338 (`/user/lookup-uuid`)
-- internal/auth/verifier.go:47-98 (token verification via `POST /user`)
-- config/config.go:43-49, 354 (`auth.hrpauth.base_url`, default `http://localhost:2778`)
-- internal/auth/client.go:3 (comment: design pattern aligned with WinnerProxy/internal/hrpauth — comment only, no code dependency)
+- internal/auth/client.go::NewClient (`GET /status`), internal/auth/client.go::GetLoginTicket (`/oauth/login-ticket`), internal/auth/client.go::VerifyTotp (`/totp/verify`), internal/auth/client.go::RefreshToken (`/oauth/token`), internal/auth/client.go::RevokeToken (`/oauth/revoke`), internal/auth/client.go::LookupUserByUsername (`/user/lookup`), internal/auth/client.go::LookupUserByUUID (`/user/lookup-uuid`)
+- internal/auth/verifier.go::Verify (token verification via `POST /user`)
+- config/config.go::AuthConfig, config/config.go::createDefaultConfig (`auth.hrpauth.base_url`, default `http://localhost:2778`) [xref]
+- internal/auth/client.go::WinnerProxy (comment: design pattern aligned with WinnerProxy/internal/hrpauth — comment only, no code dependency)
 - Repository-wide case-insensitive search on 2026-11-05 HEAD: `yggdrasil` → 0 hits in code/config; `skinlib`/`skinproxy` → 0 hits; `bs2ha`/`deployer` → 0 hits
-- api/router.go:93 (`POST /api/maintenance/sql`), :84 (`POST /api/matches`)
+- api/router.go::Register (`POST /api/maintenance/sql`, `POST /api/matches`)
 - Cross-references: 0002 (reporter integration), 0003 (identity via HRPAuth), 0004 (no Minecraft runtime)
-- HRPAuth default port 2778 confirmed in the HRPAuth repository (read-only): controllers/startup_controller.go:60
+- HRPAuth default port 2778 confirmed in the HRPAuth repository (read-only): /home/lnb/Desktop/HA/HRPAuth/controllers/startup_controller.go::buildDefaultConfig
