@@ -17,6 +17,7 @@ with HA-Contract, fix the entry, not the contract.
 | [0004](0004-standalone-http-service-without-minecraft-runtime.md) | MCA Is a Standalone Go HTTP Service with No Minecraft Server Runtime Dependency | Accepted | MCA is a self-contained Go/Gin HTTP service; every Minecraft-ecosystem interaction crosses an HTTP boundary (plugin push in, HRPAuth lookups out). |
 | [0005](0005-mysql-is-the-source-of-truth-redis-is-cache-only.md) | MySQL Is the Single Source of Truth; Baseline-Only Embedded Migrations; Redis Is Cache-Only | Accepted | All durable state lives in MySQL, bootstrapped by an embedded baseline that runs only on empty databases; Redis serves only TTL caches. |
 | [0006](0006-multi-stage-docker-build-with-env-rendered-config.md) | Deployment Is a Multi-Stage Docker Image with Environment-Rendered Config | Accepted | A multi-stage Dockerfile produces a minimal non-root runtime image; deployment-scoped config is rendered from a template via `envsubst` at container start. |
+| [0007](0007-cleanup-pass-checklist.md) | Cleanup Pass Checklist: Fixed Items and Pending Decisions | Accepted | 2026-11-04 low-risk cleanup: baseline schema aligned with the report code path (verified against MariaDB strict mode), streaks read from match_participants, stale comments/tests fixed; design-level issues listed as pending author decisions. |
 
 ## Maintenance
 
