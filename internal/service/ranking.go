@@ -8,13 +8,13 @@ import (
 
 // Ranking 排行榜条目模型。
 type Ranking struct {
-	ID          int64  `json:"id"`
-	UserUID     int64  `json:"user_uid"`
-	RankType    string `json:"rank_type"`
-	Score       int64  `json:"score"`
-	RankPosition int   `json:"rank_position"`
-	Season      int    `json:"season"`
-	UpdatedAt   string `json:"updated_at"`
+	ID           int64  `json:"id"`
+	UserUID      int64  `json:"user_uid"`
+	RankType     string `json:"rank_type"`
+	Score        int64  `json:"score"`
+	RankPosition int    `json:"rank_position"`
+	Season       int    `json:"season"`
+	UpdatedAt    string `json:"updated_at"`
 }
 
 // RankingService 排行榜业务接口。
@@ -27,7 +27,7 @@ type RankingService interface {
 
 // rankingService 数据库/Redis 实现。
 type rankingService struct {
-	db    *sql.DB
+	db *sql.DB
 }
 
 // NewRankingService 创建 RankingService 实例。

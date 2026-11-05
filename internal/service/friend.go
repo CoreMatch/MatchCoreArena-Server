@@ -7,11 +7,11 @@ import (
 
 // Friend 好友关系模型。
 type Friend struct {
-	ID         int64  `json:"id"`
-	UserUID    int64  `json:"user_uid"`
-	FriendUID  int64  `json:"friend_uid"`
-	Status     int    `json:"status"` // 0:待确认 1:已接受 2:已拒绝
-	CreatedAt  string `json:"created_at"`
+	ID        int64  `json:"id"`
+	UserUID   int64  `json:"user_uid"`
+	FriendUID int64  `json:"friend_uid"`
+	Status    int    `json:"status"` // 0:待确认 1:已接受 2:已拒绝
+	CreatedAt string `json:"created_at"`
 }
 
 // FriendService 好友业务接口。
