@@ -401,9 +401,9 @@ func (c *Client) LookupUserByUsername(username string) (uid int64, uname string,
 
 // LookupUserByUUID 通过 UUID 查找 HRPAuth 用户并获取 UID。
 // 调用已缔约的 ops 级服务间接点 GET /services/users/{uuid}
-// （HA-Contract hrpauth-business.yaml），携带 client_credentials
-// 换取的服务令牌。此前的 POST /user/lookup-uuid 从未在 HRPAuth
-// 实现过（HA-Contract knowledge/0006），已于方案 C 切换。
+// （契约：HA-Contract docs/api/openapi/hrpauth-business.yaml
+// /services/users/{uuid}；服务调用关系见 docs/dev/HRPAuth/tokens.md），
+// 携带 client_credentials 换取的服务令牌（见 serviceToken）。
 //
 //	200        → (uid, nil)
 //	404        → (0, ErrUserNotFound)
