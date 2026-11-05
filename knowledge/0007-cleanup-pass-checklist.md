@@ -54,11 +54,12 @@ migration file.
 
 ### Not fixed — requires author decision
 
-1. **`EnsureUser` is defined but never called**
-   (`internal/service/user.go::EnsureUser`): match reports for users without a local
-   `users` row fail with "用户在本地系统中不存在". Wiring `EnsureUser` into
-   the auth or report flow changes behavior (who may create local user
-   rows); deleting it removes a prepared API. Needs a direction.
+1. **`EnsureUser` is defined but never called — RESOLVED 2026-11-05.**
+   The author decided on lazy initialization: the settlement transaction
+   creates a missing `users` row itself
+   (`internal/service/match.go::getUserRatingInfo`, uid only from the
+   verified resolution result, table-default rating) and the dead
+   `EnsureUser` method was deleted. See knowledge 0003 (Consequences).
 2. **Schema drift on existing databases**: the baseline only runs against
    empty databases; production databases created before 2026-11-04 may lack
    `match_participants` and the two team columns. Whether/when to apply them

@@ -311,17 +311,42 @@ func (s *matchService) resolveUID(ctx context.Context, uuid string) (int64, erro
 }
 
 func (s *matchService) getUserRatingInfo(ctx context.Context, tx *sql.Tx, uid int64) (*userRatingInfo, error) {
+	info, err := queryUserRating(ctx, tx, uid)
+	if err == nil {
+		return info, nil
+	}
+	if err != sql.ErrNoRows {
+		return nil, err
+	}
+
+	// 懒初始化（作者决策，见 knowledge 0003）：本地缺行时在结算事务内
+	// 自动建行后继续结算（历史实现 bb8b7c6 即如此，5161b1b 误删）。
+	// 信任边界（比历史实现更严）：
+	//   - uid 只来自本次请求已通过校验的令牌 / HRPAuth 解析结果
+	//     （resolveUID），上报载荷不携带也无法自填 uid；
+	//   - 建行只写 uid，rating/wins 等全部取表默认值，上报方不可指定。
+	if _, err := tx.ExecContext(ctx, "INSERT IGNORE INTO users (uid) VALUES (?)", uid); err != nil {
+		return nil, fmt.Errorf("懒建行失败 (uid: %d): %w", uid, err)
+	}
+
+	info, err = queryUserRating(ctx, tx, uid)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			// INSERT IGNORE 被忽略（如 uid 被软删除行占用）→ 建行不可能：
+			// 类型化错误供运维定位，不与真内部故障混同。
+			return nil, apperr.New(apperr.CodeMCAUserNotProvisioned,
+				fmt.Sprintf("参与者 (uid: %d) users 行无法建立（uid 可能被已删除账户占用）", uid))
+		}
+		return nil, err
+	}
+	return info, nil
+}
+
+// queryUserRating 读取 uid 的评分信息；无行时返回 sql.ErrNoRows。
+func queryUserRating(ctx context.Context, tx *sql.Tx, uid int64) (*userRatingInfo, error) {
 	var info userRatingInfo
 	err := tx.QueryRowContext(ctx, "SELECT rank_score, wins_count FROM users WHERE uid = ? AND deleted_at IS NULL", uid).Scan(&info.RankScore, &info.WinsCount)
 	if err != nil {
-		if err == sql.ErrNoRows {
-			// 参与者已通过 HRPAuth 解析出 uid，但本地 users 行缺失：
-			// 这是数据未建行（状态不一致），不是内部故障，返回类型化错误
-			// 以便运维区分。建行机制本身待作者决策（PENDING-DECISIONS 第 4 条），
-			// 此处不做自动建行。
-			return nil, apperr.New(apperr.CodeMCAUserNotProvisioned,
-				fmt.Sprintf("参与者 (uid: %d) 本地 users 行缺失，档案未建立", uid))
-		}
 		return nil, err
 	}
 	return &info, nil
