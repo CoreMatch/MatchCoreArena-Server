@@ -26,7 +26,7 @@ func NewMaintenanceService(db *sql.DB) MaintenanceService {
 func (s *maintenanceService) ExecuteSQL(ctx context.Context, query string) (interface{}, error) {
 	// 为了简单起见，我们根据是否包含 SELECT (不区分大小写) 来决定使用 Query 还是 Exec。
 	// 注意：这只是一个基础实现，实际中可能需要更复杂的 SQL 解析。
-	
+
 	// 尝试作为查询执行
 	rows, err := s.db.QueryContext(ctx, query)
 	if err != nil {
@@ -35,13 +35,13 @@ func (s *maintenanceService) ExecuteSQL(ctx context.Context, query string) (inte
 		if execErr != nil {
 			return nil, fmt.Errorf("执行 SQL 失败 (Query: %v, Exec: %v)", err, execErr)
 		}
-		
+
 		rowsAffected, _ := result.RowsAffected()
 		lastInsertID, _ := result.LastInsertId()
 		return map[string]interface{}{
-			"rows_affected": rowsAffected,
+			"rows_affected":  rowsAffected,
 			"last_insert_id": lastInsertID,
-			"message": "SQL 执行成功",
+			"message":        "SQL 执行成功",
 		}, nil
 	}
 	defer rows.Close()

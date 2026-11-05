@@ -258,7 +258,7 @@ func TestMatchReportScopeMatrix(t *testing.T) {
 // TestMatchReportProvisioningFailedMapping 钉住"懒建行失败"（如 uid 被
 // 软删除行占用）的对外错误形态：类型化的 mca_user_not_provisioned + 409，
 // 而不是裸 internal_error + 500。正常缺行由结算事务内懒初始化覆盖
-//（见 service 层测试），此码仅在建行不可能时出现。
+// （见 service 层测试），此码仅在建行不可能时出现。
 func TestMatchReportProvisioningFailedMapping(t *testing.T) {
 	svc := &fakeMatchService{
 		reportErr: apperr.New(apperr.CodeMCAUserNotProvisioned,
