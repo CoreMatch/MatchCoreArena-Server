@@ -48,6 +48,18 @@ func TestLoad_CreatesDefaultConfigWhenMissing(t *testing.T) {
 	if cfg.Auth.HRPAuth.BaseURL != "http://localhost:2778" {
 		t.Errorf("HRPAuth BaseURL 不匹配: 期望 http://localhost:2778, 实际 %s", cfg.Auth.HRPAuth.BaseURL)
 	}
+	if !cfg.VirtualMatches.Enabled {
+		t.Error("默认配置应启用虚拟对局")
+	}
+	if !cfg.Matchmaking.Enabled {
+		t.Error("默认配置应启用匹配系统")
+	}
+	if cfg.Matchmaking.TickSeconds != 1 {
+		t.Errorf("匹配周期不匹配: 期望 1, 实际 %d", cfg.Matchmaking.TickSeconds)
+	}
+	if mode, ok := cfg.Matchmaking.FindMode("1v1"); !ok || mode.TotalPlayers() != 2 {
+		t.Errorf("默认配置应包含 1v1 模式（2 人），实际 %+v", cfg.Matchmaking.Modes)
+	}
 }
 
 func TestLoad_LoadsExistingConfig(t *testing.T) {
@@ -113,6 +125,52 @@ auth:
 	}
 	if cfg.Auth.HRPAuth.BaseURL != "https://auth.example.com" {
 		t.Errorf("HRPAuth BaseURL 不匹配: 期望 https://auth.example.com, 实际 %s", cfg.Auth.HRPAuth.BaseURL)
+	}
+}
+
+// TestLoad_Migrates150To160 覆盖 1.5.0 → 1.6.0 迁移：旧配置无
+// virtual_matches / matchmaking 块时自动补齐默认值，不报错。
+func TestLoad_Migrates150To160(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+
+	configContent := `version: "1.5.0"
+server:
+  host: "127.0.0.1"
+  port: 9178
+database:
+  host: "localhost"
+  port: 3306
+  user: "u"
+  password: "p"
+  name: "d"
+redis:
+  host: "localhost"
+  port: 6379
+auth:
+  hrpauth:
+    base_url: "http://localhost:2778"
+  maintenance_token: "t"
+`
+	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+		t.Fatalf("写入测试配置文件失败: %v", err)
+	}
+
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("1.5.0 配置应能迁移加载: %v", err)
+	}
+	if cfg.Version != "1.6.0" {
+		t.Errorf("版本号不匹配: 期望 1.6.0, 实际 %s", cfg.Version)
+	}
+	if !cfg.VirtualMatches.Enabled {
+		t.Error("迁移应默认启用虚拟对局")
+	}
+	if cfg.Matchmaking.QueueTimeoutSeconds != 300 {
+		t.Errorf("排队超时默认值不匹配: 期望 300, 实际 %d", cfg.Matchmaking.QueueTimeoutSeconds)
+	}
+	if len(cfg.Matchmaking.Modes) != 2 {
+		t.Errorf("默认模式数不匹配: 期望 2, 实际 %d", len(cfg.Matchmaking.Modes))
 	}
 }
 
