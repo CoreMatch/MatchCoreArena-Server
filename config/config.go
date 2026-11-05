@@ -27,7 +27,7 @@ import (
 //  1. 将 CurrentVersion 提升到新版本；
 //  2. 在 migrations 列表中追加对应的迁移函数；
 //  3. 在 config.example.yaml 中同步更新。
-const CurrentVersion = "1.4.0"
+const CurrentVersion = "1.5.0"
 
 // AppConfig 应用配置根结构。
 type AppConfig struct {
@@ -52,6 +52,12 @@ type AuthConfig struct {
 type HRPAuthConfig struct {
 	BaseURL        string `yaml:"base_url"`         // HRPAuth 根地址，如 http://localhost:2778
 	PublicClientID string `yaml:"public_client_id"` // OAuth2 public client_id，用于 refresh_token 等第一方流程
+	// ServiceClientID / ServiceClientSecret 是 ops 级服务凭据（client_credentials），
+	// 用于调用 HRPAuth 服务间接点（如 GET /services/users/{uuid} 解析参与者身份）。
+	// 部署时注入 HRPAuth 内置 super client 的凭据（与 Yggdrasil-API 的
+	// core_api.client_id/secret 同源）。留空时服务调用会以类型化错误失败。
+	ServiceClientID     string `yaml:"service_client_id"`
+	ServiceClientSecret string `yaml:"service_client_secret"`
 }
 
 // ServerConfig HTTP 服务配置。
@@ -182,6 +188,31 @@ var migrations = []migration{
 			if _, ok := authRaw["maintenance_token"]; !ok {
 				authRaw["maintenance_token"] = generateRandomToken(32)
 			}
+			in["auth"] = authRaw
+			return in, nil
+		},
+	},
+	{
+		from: "1.4.0",
+		to:   "1.5.0",
+		run: func(in rawConfig) (rawConfig, error) {
+			// 新增 ops 级服务凭据字段（client_credentials），默认空值：
+			// 留空时服务调用以类型化错误失败，不阻塞启动。
+			authRaw, _ := in["auth"].(map[string]any)
+			if authRaw == nil {
+				authRaw = map[string]any{}
+			}
+			hrpauthRaw, _ := authRaw["hrpauth"].(map[string]any)
+			if hrpauthRaw == nil {
+				hrpauthRaw = map[string]any{}
+			}
+			if _, ok := hrpauthRaw["service_client_id"]; !ok {
+				hrpauthRaw["service_client_id"] = ""
+			}
+			if _, ok := hrpauthRaw["service_client_secret"]; !ok {
+				hrpauthRaw["service_client_secret"] = ""
+			}
+			authRaw["hrpauth"] = hrpauthRaw
 			in["auth"] = authRaw
 			return in, nil
 		},
