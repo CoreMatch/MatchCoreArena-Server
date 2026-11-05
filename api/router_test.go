@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+
+	"MatchCoreArena-Server/config"
 )
 
 // newTestRouter assembles the full route table without external
@@ -17,7 +19,7 @@ func newTestRouter(t *testing.T) *gin.Engine {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	Register(r, nil, nil, nil, nil, "test-version")
+	Register(r, nil, nil, nil, nil, "test-version", config.AppConfig{})
 	return r
 }
 

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"log"
@@ -12,6 +13,7 @@ import (
 	"MatchCoreArena-Server/api"
 	"MatchCoreArena-Server/config"
 	"MatchCoreArena-Server/internal/auth"
+	"MatchCoreArena-Server/internal/service"
 	"MatchCoreArena-Server/migrate"
 	"MatchCoreArena-Server/redis"
 )
@@ -102,9 +104,17 @@ func main() {
 
 	// 9. 初始化 Gin 路由
 	r := gin.Default()
-	api.Register(r, db, hrpauthClient, tokenVerifier, redisClient, appCfg.Version)
+	api.Register(r, db, hrpauthClient, tokenVerifier, redisClient, appCfg.Version, *appCfg)
 
-	// 9. 启动服务器
+	// 10. 启动匹配引擎（后台周期扫描队列成局）
+	if appCfg.Matchmaking.Enabled {
+		engine := service.NewMatchmakingEngine(db, appCfg.Matchmaking)
+		engine.Start(context.Background())
+		log.Printf("匹配引擎已启动（周期 %ds，超时 %ds，模式 %d 种）",
+			appCfg.Matchmaking.TickSeconds, appCfg.Matchmaking.QueueTimeoutSeconds, len(appCfg.Matchmaking.Modes))
+	}
+
+	// 11. 启动服务器
 	addr := appCfg.Server.Host + ":" + strconv.Itoa(appCfg.Server.Port)
 	log.Printf("HTTP 服务启动于 %s", addr)
 	if err := r.Run(addr); err != nil {

@@ -16,28 +16,35 @@ import (
 )
 
 // Match 对战记录模型。
+// Source 区分对局来源：game=游戏服务器上报，virtual=虚拟对局。
+// MapName 为可选地图标识。
 type Match struct {
 	ID              int64   `json:"id"`
 	MatchType       string  `json:"match_type"`
+	Source          string  `json:"source"`
+	MapName         string  `json:"map_name"`
 	WinnerTeamID    string  `json:"winner_team_id"`
 	SurvivalRate    float64 `json:"survival_rate"`
 	DurationSeconds int     `json:"duration_seconds"`
 	StartedAt       string  `json:"started_at"`
 	FinishedAt      string  `json:"finished_at"`
 	CreatedAt       string  `json:"created_at"`
+
+	// Participants 参与者明细；仅 GetByID 填充，列表接口为空。
+	Participants []*ParticipantDetail `json:"participants,omitempty"`
 }
 
-// Participant 对战参与者模型。
-type Participant struct {
-	UID             int64   `json:"uid"`
-	TeamID          string  `json:"team_id"`
-	IsWinner        bool    `json:"is_winner"`
-	RankScoreBefore int     `json:"rank_score_before"`
-	RankScoreDelta  int     `json:"rank_score_delta"`
-	SurvivalTime    int     `json:"survival_time"`
-	Kills           int     `json:"kills"`
-	Deaths          int     `json:"deaths"`
-	PerfTweak       float64 `json:"perf_tweak"` // 个人表现微调系数 [0.95, 1.05]
+// ParticipantDetail 对战参与者明细（含本局评分变动），随对战详情返回。
+type ParticipantDetail struct {
+	UID             int64  `json:"uid"`
+	TeamID          string `json:"team_id"`
+	IsWinner        bool   `json:"is_winner"`
+	IsDraw          bool   `json:"is_draw"`
+	RankScoreBefore int    `json:"rank_score_before"`
+	RankScoreDelta  int    `json:"rank_score_delta"`
+	SurvivalTime    int    `json:"survival_time"`
+	Kills           int    `json:"kills"`
+	Deaths          int    `json:"deaths"`
 }
 
 // TeamReportInput 团队对战上报参数。
@@ -75,7 +82,10 @@ type Page struct {
 type MatchService interface {
 	// Report 上报团队对战结果。
 	Report(ctx context.Context, reporterUID int64, in TeamReportInput) (*Match, error)
-	// GetByID 获取对战详情。
+	// ReportVirtual 提交虚拟对局：不依赖游戏侧连接，直接灌入对局数据
+	// 完成定级结算。支持平局；恰好一队获胜时评分公式与 Report 完全一致。
+	ReportVirtual(ctx context.Context, reporterUID int64, in VirtualReportInput) (*VirtualMatchResult, error)
+	// GetByID 获取对战详情（含参与者明细）。
 	GetByID(ctx context.Context, id int64) (*Match, error)
 	// ListByUser 列出用户参与的对战历史（分页）。
 	ListByUser(ctx context.Context, uid int64, page Page) ([]*Match, error)
@@ -356,8 +366,9 @@ func (s *matchService) getUserStreak(ctx context.Context, tx *sql.Tx, uid int64)
 	// 获取最近 10 场对战结果来计算连胜/连败。
 	// 团队对战的胜负按玩家记录在 match_participants（matches 主表的
 	// winner_uid/loser_uid 不随上报写入），因此以参与者记录为准。
+	// 平局（虚拟对局）终止连胜/连败：遇到 is_draw 行即停止计数。
 	rows, err := tx.QueryContext(ctx,
-		`SELECT mp.is_winner
+		`SELECT mp.is_winner, mp.is_draw
 		 FROM match_participants mp
 		 JOIN matches m ON mp.match_id = m.id
 		 WHERE mp.user_uid = ?
@@ -374,9 +385,14 @@ func (s *matchService) getUserStreak(ctx context.Context, tx *sql.Tx, uid int64)
 	winning := false
 
 	for rows.Next() {
-		var isWinner bool
-		if err := rows.Scan(&isWinner); err != nil {
+		var isWinner, isDraw bool
+		if err := rows.Scan(&isWinner, &isDraw); err != nil {
 			return 0, err
+		}
+
+		if isDraw {
+			// 平局不属于任何一侧：连胜/连败清零并终止计数。
+			break
 		}
 
 		isWin := isWinner
@@ -418,20 +434,42 @@ func (s *matchService) updateRanking(ctx context.Context, tx *sql.Tx, uid int64,
 	return err
 }
 
-// GetByID 获取对战详情。
+// GetByID 获取对战详情（含参与者明细与各自的评分变动）。
 func (s *matchService) GetByID(ctx context.Context, id int64) (*Match, error) {
 	var m Match
+	var mapName, winnerTeamID sql.NullString
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, match_type, winner_team_id, survival_rate, duration_seconds, started_at, finished_at, created_at 
+		`SELECT id, match_type, source, map_name, winner_team_id, survival_rate, duration_seconds, started_at, finished_at, created_at
 		 FROM matches WHERE id = ?`,
 		id,
-	).Scan(&m.ID, &m.MatchType, &m.WinnerTeamID, &m.SurvivalRate, &m.DurationSeconds, &m.StartedAt, &m.FinishedAt, &m.CreatedAt)
+	).Scan(&m.ID, &m.MatchType, &m.Source, &mapName, &winnerTeamID, &m.SurvivalRate, &m.DurationSeconds, &m.StartedAt, &m.FinishedAt, &m.CreatedAt)
 
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return nil, fmt.Errorf("对战记录不存在")
+			return nil, apperr.New(apperr.CodeMCAMatchNotFound, fmt.Sprintf("对战记录 (id: %d) 不存在", id))
 		}
 		return nil, fmt.Errorf("查询对战详情失败: %w", err)
+	}
+	m.MapName = mapName.String
+	m.WinnerTeamID = winnerTeamID.String
+
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT user_uid, team_id, is_winner, is_draw, rank_score_before, rank_score_delta, survival_time_seconds, kills, deaths
+		 FROM match_participants WHERE match_id = ? ORDER BY id`,
+		id,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("查询对战参与者失败: %w", err)
+	}
+	defer rows.Close()
+
+	m.Participants = []*ParticipantDetail{}
+	for rows.Next() {
+		var p ParticipantDetail
+		if err := rows.Scan(&p.UID, &p.TeamID, &p.IsWinner, &p.IsDraw, &p.RankScoreBefore, &p.RankScoreDelta, &p.SurvivalTime, &p.Kills, &p.Deaths); err != nil {
+			return nil, fmt.Errorf("解析对战参与者失败: %w", err)
+		}
+		m.Participants = append(m.Participants, &p)
 	}
 	return &m, nil
 }
@@ -440,10 +478,10 @@ func (s *matchService) GetByID(ctx context.Context, id int64) (*Match, error) {
 func (s *matchService) ListByUser(ctx context.Context, uid int64, page Page) ([]*Match, error) {
 	offset := (page.PageNum - 1) * page.PageSize
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT m.id, m.match_type, m.winner_team_id, m.survival_rate, m.duration_seconds, m.started_at, m.finished_at, m.created_at 
+		`SELECT m.id, m.match_type, m.source, m.map_name, m.winner_team_id, m.survival_rate, m.duration_seconds, m.started_at, m.finished_at, m.created_at
 		 FROM matches m
 		 JOIN match_participants mp ON m.id = mp.match_id
-		 WHERE mp.user_uid = ? 
+		 WHERE mp.user_uid = ?
 		 ORDER BY m.created_at DESC LIMIT ? OFFSET ?`,
 		uid, page.PageSize, offset,
 	)
@@ -455,9 +493,12 @@ func (s *matchService) ListByUser(ctx context.Context, uid int64, page Page) ([]
 	var matches []*Match
 	for rows.Next() {
 		var m Match
-		if err := rows.Scan(&m.ID, &m.MatchType, &m.WinnerTeamID, &m.SurvivalRate, &m.DurationSeconds, &m.StartedAt, &m.FinishedAt, &m.CreatedAt); err != nil {
+		var mapName, winnerTeamID sql.NullString
+		if err := rows.Scan(&m.ID, &m.MatchType, &m.Source, &mapName, &winnerTeamID, &m.SurvivalRate, &m.DurationSeconds, &m.StartedAt, &m.FinishedAt, &m.CreatedAt); err != nil {
 			return nil, fmt.Errorf("解析对战记录失败: %w", err)
 		}
+		m.MapName = mapName.String
+		m.WinnerTeamID = winnerTeamID.String
 		matches = append(matches, &m)
 	}
 	return matches, nil

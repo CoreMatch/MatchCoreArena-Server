@@ -12,13 +12,15 @@ import (
 )
 
 // MatchHandler 对战 HTTP handler。
+// virtualEnabled 来自配置 virtual_matches.enabled，关闭时虚拟对局入口返回 400。
 type MatchHandler struct {
-	svc service.MatchService
+	svc            service.MatchService
+	virtualEnabled bool
 }
 
 // NewMatchHandler 创建 MatchHandler。
-func NewMatchHandler(svc service.MatchService) *MatchHandler {
-	return &MatchHandler{svc: svc}
+func NewMatchHandler(svc service.MatchService, virtualEnabled bool) *MatchHandler {
+	return &MatchHandler{svc: svc, virtualEnabled: virtualEnabled}
 }
 
 // Report POST /api/matches
@@ -43,6 +45,35 @@ func (h *MatchHandler) Report(c *gin.Context) {
 		return
 	}
 	response.Created(c, "团队对战结果已记录", m)
+}
+
+// Virtual POST /api/matches/virtual
+// 虚拟对局入口：不依赖游戏侧连接，直接灌入对局数据完成定级结算。
+// 与游戏上报同一鉴权姿态（match:report scope），不改动 POST /api/matches 语义。
+func (h *MatchHandler) Virtual(c *gin.Context) {
+	if !h.virtualEnabled {
+		response.FailCode(c, apperr.CodeMCAInvalidRequest, "虚拟对局未启用")
+		return
+	}
+	if !middleware.HasScope(c, "match:report") {
+		response.FailCode(c, apperr.CodeOAuthInsufficientScope, "无权提交虚拟对局")
+		return
+	}
+
+	uid := middleware.GetUID(c)
+
+	var body service.VirtualReportInput
+	if err := c.ShouldBindJSON(&body); err != nil {
+		response.FailCode(c, apperr.CodeMCAInvalidRequest, "请求参数格式错误: "+err.Error())
+		return
+	}
+
+	result, err := h.svc.ReportVirtual(c.Request.Context(), uid, body)
+	if err != nil {
+		response.Fail(c, "提交虚拟对局失败", err)
+		return
+	}
+	response.Created(c, "虚拟对局已记录", result)
 }
 
 // GetByID GET /api/matches/:id

@@ -54,6 +54,15 @@ func (f *fakeMatchService) Report(_ context.Context, uid int64, in service.TeamR
 	return &service.Match{ID: 42, MatchType: in.MatchType}, nil
 }
 
+func (f *fakeMatchService) ReportVirtual(_ context.Context, uid int64, in service.VirtualReportInput) (*service.VirtualMatchResult, error) {
+	f.reportCalls++
+	f.lastUID = uid
+	if f.reportErr != nil {
+		return nil, f.reportErr
+	}
+	return &service.VirtualMatchResult{Match: service.Match{ID: 43, MatchType: in.MatchType, Source: service.MatchSourceVirtual}}, nil
+}
+
 func (f *fakeMatchService) GetByID(context.Context, int64) (*service.Match, error) {
 	return nil, nil
 }
@@ -69,7 +78,7 @@ func newMatchRouter(v auth.Verifier, svc service.MatchService) *gin.Engine {
 	r.Use(middleware.RequestID())
 	api := r.Group("/api")
 	api.Use(middleware.Auth(v))
-	h := handler.NewMatchHandler(svc)
+	h := handler.NewMatchHandler(svc, true)
 	api.POST("/matches", h.Report)
 	return r
 }
