@@ -4,7 +4,9 @@
 Accepted
 
 ## Date
-2026-09-18 (UUID-to-UID resolution; HRPAuth-backed auth introduced 2026-09-11)
+2026-09-18 (UUID-to-UID resolution; HRPAuth-backed auth introduced 2026-09-11;
+updated 2026-11-05: resolution moved to the contracted ops-level service
+endpoint, see Decision)
 
 ## Context
 Match reports arrive from the Minecraft server, where players are identified by
@@ -20,8 +22,17 @@ internal identity key and a way to bridge the two identifier spaces.
   for 5 minutes. MCA's own auth endpoints are a transparent proxy to HRPAuth
   (login-ticket, TOTP verify, refresh, revoke).
 - Match reports carry Minecraft UUIDs per participant. For each UUID, MCA calls
-  HRPAuth `POST /user/lookup-uuid` to obtain the UID, caching the mapping in Redis
-  for 24 hours.
+  HRPAuth `GET /services/users/{uuid}` to obtain the UID, caching the mapping in
+  Redis for 24 hours. **Update 2026-11-05:** the original implementation called
+  `POST /user/lookup-uuid`, an endpoint that never existed in HRPAuth
+  (HA-Contract knowledge/0006); the author chose option C — the contracted
+  ops-level service endpoint `GET /services/users/{uuid}` — with a
+  `client_credentials` service identity: MCA holds HRPAuth service credentials
+  (`auth.hrpauth.service_client_id/secret`, deployment injects the built-in
+  super-client pair, same source as Yggdrasil-API's `core_api` credentials),
+  caches the issued service token and refreshes it before expiry; credential or
+  token failures surface as the typed `ErrServiceAuth`, an unknown UUID keeps
+  the `ErrUserNotFound` semantics.
 - MCA contains no Yggdrasil / Minecraft protocol code. The only Minecraft-related
   datum in the codebase is the `mojang_uuid` field passed through from the HRPAuth
   `/user` response.
@@ -47,7 +58,9 @@ internal identity key and a way to bridge the two identifier spaces.
 - internal/service/user.go::EnsureUser — comment: uid is HRPAuth User.UID
 - internal/auth/verifier.go::Verify — token verification via HRPAuth /user with 5-minute Redis cache
 - internal/auth/client.go::GetUser — GetUser (POST /user), mojang_uuid pass-through (internal/auth/client.go::mojang_uuid)
-- internal/auth/client.go::LookupUserByUUID — LookupUserByUUID (POST /user/lookup-uuid)
+- internal/auth/client.go::LookupUserByUUID — LookupUserByUUID (GET /services/users/{uuid}, service-token authenticated; before 2026-11-05 it called the never-implemented POST /user/lookup-uuid)
+- internal/auth/client.go::serviceToken — client_credentials service token with caching and pre-expiry refresh (typed ErrServiceAuth on failure)
+- config/config.go::HRPAuthConfig — service_client_id / service_client_secret (config 1.5.0)
 - internal/service/match.go::ParticipantReport — participants reported by Minecraft UUID
 - internal/service/match.go::resolveUID — report fails if any UUID resolution fails
 - internal/service/match.go::resolveUID — resolveUID with 24-hour Redis cache (`mca:uuid_to_uid:`)
