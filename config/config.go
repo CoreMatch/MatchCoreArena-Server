@@ -27,15 +27,64 @@ import (
 //  1. 将 CurrentVersion 提升到新版本；
 //  2. 在 migrations 列表中追加对应的迁移函数；
 //  3. 在 config.example.yaml 中同步更新。
-const CurrentVersion = "1.5.0"
+const CurrentVersion = "1.6.0"
 
 // AppConfig 应用配置根结构。
 type AppConfig struct {
-	Version  string         `yaml:"version"`
-	Server   ServerConfig   `yaml:"server"`
-	Database DatabaseConfig `yaml:"database"`
-	Redis    RedisConfig    `yaml:"redis"`
-	Auth     AuthConfig     `yaml:"auth"`
+	Version        string               `yaml:"version"`
+	Server         ServerConfig         `yaml:"server"`
+	Database       DatabaseConfig       `yaml:"database"`
+	Redis          RedisConfig          `yaml:"redis"`
+	Auth           AuthConfig           `yaml:"auth"`
+	VirtualMatches VirtualMatchesConfig `yaml:"virtual_matches"`
+	Matchmaking    MatchmakingConfig    `yaml:"matchmaking"`
+}
+
+// VirtualMatchesConfig 虚拟对局配置。
+// 虚拟对局不依赖游戏侧连接，由持有 match:report scope 的调用方直接灌入
+// 对局数据完成定级结算（见 POST /api/matches/virtual）。
+type VirtualMatchesConfig struct {
+	Enabled bool `yaml:"enabled"`
+}
+
+// MatchmakingConfig 匹配系统配置。
+// 引擎以 TickSeconds 为周期扫描 matchmaking_queue，按分差窗口贪心成局；
+// 窗口随等待时长线性放宽（BaseRatingWindow + 每分钟增长，封顶 MaxRatingWindow），
+// 超过 QueueTimeoutSeconds 未成局的记录被移除。
+type MatchmakingConfig struct {
+	Enabled                     bool        `yaml:"enabled"`
+	TickSeconds                 int         `yaml:"tick_seconds"`
+	QueueTimeoutSeconds         int         `yaml:"queue_timeout_seconds"`
+	BaseRatingWindow            int         `yaml:"base_rating_window"`
+	RatingWindowGrowthPerMinute int         `yaml:"rating_window_growth_per_minute"`
+	MaxRatingWindow             int         `yaml:"max_rating_window"`
+	Modes                       []MatchMode `yaml:"modes"`
+}
+
+// MatchMode 描述一种可排队的对战模式：各队人数。
+// 例如 1v1 => [1, 1]，2v2 => [2, 2]。
+type MatchMode struct {
+	MatchType string `yaml:"match_type"`
+	TeamSizes []int  `yaml:"team_sizes"`
+}
+
+// TotalPlayers 返回该模式成局所需总人数。
+func (m MatchMode) TotalPlayers() int {
+	total := 0
+	for _, n := range m.TeamSizes {
+		total += n
+	}
+	return total
+}
+
+// FindMode 按 match_type 查找模式；未配置返回 false。
+func (c MatchmakingConfig) FindMode(matchType string) (MatchMode, bool) {
+	for _, m := range c.Modes {
+		if m.MatchType == matchType {
+			return m, true
+		}
+	}
+	return MatchMode{}, false
 }
 
 // AuthConfig 认证配置。
@@ -217,6 +266,31 @@ var migrations = []migration{
 			return in, nil
 		},
 	},
+	{
+		from: "1.5.0",
+		to:   "1.6.0",
+		run: func(in rawConfig) (rawConfig, error) {
+			// 新增虚拟对局开关与匹配系统配置块，默认启用、参数取保守默认值。
+			if _, ok := in["virtual_matches"]; !ok {
+				in["virtual_matches"] = map[string]any{"enabled": true}
+			}
+			if _, ok := in["matchmaking"]; !ok {
+				in["matchmaking"] = map[string]any{
+					"enabled":                          true,
+					"tick_seconds":                     1,
+					"queue_timeout_seconds":            300,
+					"base_rating_window":               200,
+					"rating_window_growth_per_minute":  100,
+					"max_rating_window":                1000,
+					"modes": []any{
+						map[string]any{"match_type": "1v1", "team_sizes": []any{1, 1}},
+						map[string]any{"match_type": "2v2", "team_sizes": []any{2, 2}},
+					},
+				}
+			}
+			return in, nil
+		},
+	},
 }
 
 // Load 从指定路径加载配置文件，并完成版本校验/迁移，最终反序列化为 AppConfig。
@@ -338,6 +412,38 @@ func validate(cfg *AppConfig) error {
 	if cfg.Auth.HRPAuth.BaseURL == "" {
 		return errors.New("auth.hrpauth.base_url 必填")
 	}
+	// Matchmaking 校验（1.6.0+）
+	mm := cfg.Matchmaking
+	if mm.TickSeconds <= 0 {
+		return errors.New("matchmaking.tick_seconds 必须为正数")
+	}
+	if mm.QueueTimeoutSeconds <= 0 {
+		return errors.New("matchmaking.queue_timeout_seconds 必须为正数")
+	}
+	if mm.BaseRatingWindow <= 0 || mm.MaxRatingWindow <= 0 {
+		return errors.New("matchmaking.base_rating_window 与 max_rating_window 必须为正数")
+	}
+	if mm.RatingWindowGrowthPerMinute < 0 {
+		return errors.New("matchmaking.rating_window_growth_per_minute 不能为负数")
+	}
+	seen := make(map[string]bool, len(mm.Modes))
+	for _, mode := range mm.Modes {
+		if mode.MatchType == "" {
+			return errors.New("matchmaking.modes 中存在空 match_type")
+		}
+		if seen[mode.MatchType] {
+			return fmt.Errorf("matchmaking.modes 中 match_type 重复: %s", mode.MatchType)
+		}
+		seen[mode.MatchType] = true
+		if len(mode.TeamSizes) == 0 {
+			return fmt.Errorf("matchmaking.modes[%s].team_sizes 不能为空", mode.MatchType)
+		}
+		for _, n := range mode.TeamSizes {
+			if n <= 0 {
+				return fmt.Errorf("matchmaking.modes[%s].team_sizes 必须全部为正数", mode.MatchType)
+			}
+		}
+	}
 	return nil
 }
 
@@ -390,6 +496,19 @@ func createDefaultConfig(path string) error {
 				PublicClientID: "hrpauth-webui",
 			},
 			MaintenanceToken: generateRandomToken(32),
+		},
+		VirtualMatches: VirtualMatchesConfig{Enabled: true},
+		Matchmaking: MatchmakingConfig{
+			Enabled:                     true,
+			TickSeconds:                 1,
+			QueueTimeoutSeconds:         300,
+			BaseRatingWindow:            200,
+			RatingWindowGrowthPerMinute: 100,
+			MaxRatingWindow:             1000,
+			Modes: []MatchMode{
+				{MatchType: "1v1", TeamSizes: []int{1, 1}},
+				{MatchType: "2v2", TeamSizes: []int{2, 2}},
+			},
 		},
 	}
 

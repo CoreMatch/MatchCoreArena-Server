@@ -45,6 +45,17 @@ decision. This entry records the current alignment and the open items.
    the individual performance weight currently has no effect end-to-end.
 7. **No README** in this repository; documentation lives in `knowledge/` and
    `bwrel.md` investigation notes only.
+8. **Virtual matches count toward real ratings and rankings**: the virtual
+   entry point (0009) writes the same `users`/`rankings` tables as game
+   reports; matches are only distinguishable via `matches.source`. Whether
+   virtual results should be segmented, filtered from leaderboards, or kept
+   as-is needs a decision. Related: who may hold `match:report` tokens for
+   virtual injection, and whether ordinary logged-in users should ever be
+   able to submit virtual matches.
+9. **Matchmaking parameters are placeholders**: window size/growth, queue
+   timeout and tick interval (0009) are conservative defaults, not tuned;
+   whether matchmaking should interact with any live game-provisioning flow
+   is not designed.
 
 ## Consequences
 - Fresh databases stay column-compatible with existing production databases;

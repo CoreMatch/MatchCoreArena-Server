@@ -1,7 +1,7 @@
 # MatchCoreArena-Server 应用配置模板
 # 复制为 config.yaml 后按需修改；版本变更由 config 包自动迁移。
 
-version: "1.5.0"
+version: "1.6.0"
 
 server:
   host: "0.0.0.0"
@@ -41,3 +41,28 @@ auth:
   # 运维超级凭据，拥有所有权限。
   # 首次创建配置文件时会自动生成一个 64 位随机 16 进制字符串。
   maintenance_token: ""
+
+# 虚拟对局：不依赖游戏侧连接，由持有 match:report scope 的调用方
+# 直接灌入对局数据完成定级结算（POST /api/matches/virtual）。
+virtual_matches:
+  enabled: true
+
+# 匹配系统：后台引擎周期性扫描队列，按分差窗口贪心成局。
+matchmaking:
+  enabled: true
+  # 引擎扫描周期（秒）
+  tick_seconds: 1
+  # 排队超时（秒）：超时未成局自动移出队列
+  queue_timeout_seconds: 300
+  # 基础分差窗口
+  base_rating_window: 200
+  # 窗口随等待时长的放宽速率（每分钟）
+  rating_window_growth_per_minute: 100
+  # 分差窗口上限
+  max_rating_window: 1000
+  # 可排队模式：match_type 与对应各队人数
+  modes:
+    - match_type: "1v1"
+      team_sizes: [1, 1]
+    - match_type: "2v2"
+      team_sizes: [2, 2]

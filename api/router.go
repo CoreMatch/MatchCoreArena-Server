@@ -9,13 +9,15 @@ import (
 
 	"MatchCoreArena-Server/api/handler"
 	"MatchCoreArena-Server/api/middleware"
+	"MatchCoreArena-Server/config"
 	"MatchCoreArena-Server/internal/auth"
 	"MatchCoreArena-Server/internal/response"
 	"MatchCoreArena-Server/internal/service"
 )
 
 // Register 装配所有 API 路由。
-func Register(r *gin.Engine, db *sql.DB, oauthClient *auth.Client, ver auth.Verifier, rdb *goredis.Client, version string) {
+// appCfg 提供虚拟对局开关与匹配系统配置。
+func Register(r *gin.Engine, db *sql.DB, oauthClient *auth.Client, ver auth.Verifier, rdb *goredis.Client, version string, appCfg config.AppConfig) {
 	// 全局中间件
 	r.Use(middleware.RequestID())
 	r.Use(middleware.Recovery())
@@ -27,15 +29,17 @@ func Register(r *gin.Engine, db *sql.DB, oauthClient *auth.Client, ver auth.Veri
 	matchSvc := service.NewMatchService(db, oauthClient, rdb)
 	rankingSvc := service.NewRankingService(db)
 	maintenanceSvc := service.NewMaintenanceService(db)
+	matchmakingSvc := service.NewMatchmakingService(db, appCfg.Matchmaking)
 
 	// 初始化 handler 层
 	authH := handler.NewAuthHandler(oauthClient, ver)
 	userH := handler.NewUserHandler(userSvc)
 	friendH := handler.NewFriendHandler(friendSvc, oauthClient, rdb)
 	teamH := handler.NewTeamHandler(teamSvc)
-	matchH := handler.NewMatchHandler(matchSvc)
+	matchH := handler.NewMatchHandler(matchSvc, appCfg.VirtualMatches.Enabled)
 	rankingH := handler.NewRankingHandler(rankingSvc)
 	maintenanceH := handler.NewMaintenanceHandler(maintenanceSvc)
+	matchmakingH := handler.NewMatchmakingHandler(matchmakingSvc)
 
 	// 公开端点
 	r.GET("/api/status", func(c *gin.Context) {
@@ -82,8 +86,14 @@ func Register(r *gin.Engine, db *sql.DB, oauthClient *auth.Client, ver auth.Veri
 
 		// matches
 		api.POST("/matches", matchH.Report)
+		api.POST("/matches/virtual", matchH.Virtual)
 		api.GET("/matches/:id", matchH.GetByID)
 		api.GET("/matches/me", matchH.ListByMe)
+
+		// matchmaking
+		api.POST("/matchmaking/join", matchmakingH.Join)
+		api.DELETE("/matchmaking/leave", matchmakingH.Leave)
+		api.GET("/matchmaking/status", matchmakingH.Status)
 
 		// rankings（需要鉴权：与该组其他端点一致）
 		api.GET("/rankings/:type", rankingH.GetTop)

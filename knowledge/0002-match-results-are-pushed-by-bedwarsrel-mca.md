@@ -9,8 +9,10 @@ Minecraft-side plugin that runs the matches (BedwarsRel-MCA), and the report
 endpoint must be protected so that only trusted system callers can write ratings.
 
 ## Decision
-- Match results enter MCA exclusively through `POST /api/matches`, mounted behind
-  the Bearer-token auth middleware.
+- Game match results enter MCA through `POST /api/matches`, mounted behind the
+  Bearer-token auth middleware. A second, virtual entry point exists at
+  `POST /api/matches/virtual` (see 0009); both entry points share the same
+  auth posture described here.
 - The handler additionally requires the `match:report` OAuth scope; without it the
   request is rejected with an insufficient-scope error.
 - Token verification resolves in this order: (1) the configured maintenance token

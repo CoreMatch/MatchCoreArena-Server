@@ -58,6 +58,8 @@ CREATE TABLE IF NOT EXISTS team_members (
 CREATE TABLE IF NOT EXISTS matches (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     match_type VARCHAR(20) NOT NULL COMMENT '对战类型',
+    source VARCHAR(20) NOT NULL DEFAULT 'game' COMMENT '对局来源: game=游戏服务器上报, virtual=虚拟对局',
+    map_name VARCHAR(50) NULL COMMENT '地图标识（可选）',
     winner_uid BIGINT NOT NULL DEFAULT 0,
     loser_uid BIGINT NOT NULL DEFAULT 0,
     winner_team_id VARCHAR(50) COMMENT '获胜队伍ID',
@@ -82,6 +84,7 @@ CREATE TABLE IF NOT EXISTS match_participants (
     user_uid BIGINT NOT NULL,
     team_id VARCHAR(50) NOT NULL COMMENT '队伍标识（如颜色或ID）',
     is_winner BOOLEAN NOT NULL DEFAULT FALSE,
+    is_draw BOOLEAN NOT NULL DEFAULT FALSE COMMENT '平局（虚拟对局支持；游戏上报恒为 FALSE）',
     rank_score_before INT NOT NULL COMMENT '赛前积分',
     rank_score_delta INT NOT NULL COMMENT '本局积分变动',
     survival_time_seconds INT NOT NULL DEFAULT 0 COMMENT '生存时长',
@@ -91,6 +94,38 @@ CREATE TABLE IF NOT EXISTS match_participants (
     INDEX idx_match_id (match_id),
     INDEX idx_user_uid (user_uid),
     FOREIGN KEY (match_id) REFERENCES matches(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 匹配队列表：每个用户同时至多一条排队记录
+CREATE TABLE IF NOT EXISTS matchmaking_queue (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    user_uid BIGINT NOT NULL,
+    match_type VARCHAR(20) NOT NULL COMMENT '排队模式（与 matches.match_type 同源）',
+    rank_score INT NOT NULL COMMENT '入队时评分快照',
+    enqueued_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_user (user_uid),
+    INDEX idx_type_score (match_type, rank_score)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 匹配成局表：引擎成局时写入一局
+CREATE TABLE IF NOT EXISTS matchmaking_groups (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    match_type VARCHAR(20) NOT NULL,
+    formed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_formed_at (formed_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 匹配成局成员表：成局时记录每位参与者的队伍与评分快照
+CREATE TABLE IF NOT EXISTS matchmaking_group_members (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    group_id BIGINT NOT NULL,
+    user_uid BIGINT NOT NULL,
+    team_id VARCHAR(50) NOT NULL COMMENT '成局分配的队伍标识',
+    rank_score INT NOT NULL COMMENT '成局时评分',
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_group_id (group_id),
+    INDEX idx_user_uid (user_uid),
+    FOREIGN KEY (group_id) REFERENCES matchmaking_groups(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 排行榜表

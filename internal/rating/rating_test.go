@@ -53,6 +53,24 @@ func TestGetStreakWeight(t *testing.T) {
 	}
 }
 
+func TestGetIndividualPerformanceTweak(t *testing.T) {
+	// 未提供（0）按契约默认值 1.0 处理，不受下限钳制。
+	if w := GetIndividualPerformanceTweak(0); w != 1.0 {
+		t.Errorf("Expected 1.0 for omitted perf, got %f", w)
+	}
+	// 区间内原样返回。
+	if w := GetIndividualPerformanceTweak(1.03); w != 1.03 {
+		t.Errorf("Expected 1.03, got %f", w)
+	}
+	// 越界钳制到 [0.95, 1.05]。
+	if w := GetIndividualPerformanceTweak(0.5); w != 0.95 {
+		t.Errorf("Expected 0.95, got %f", w)
+	}
+	if w := GetIndividualPerformanceTweak(2.0); w != 1.05 {
+		t.Errorf("Expected 1.05, got %f", w)
+	}
+}
+
 func TestCalculateDelta(t *testing.T) {
 	// 示例推导：K=480, S=1, E=0.35, W_round=1.20, W_streak=1.10, W_perf=1.00
 	// delta = 480 * (1 - 0.35) * 1.20 * 1.10 * 1.00 = 411.84 -> 412
