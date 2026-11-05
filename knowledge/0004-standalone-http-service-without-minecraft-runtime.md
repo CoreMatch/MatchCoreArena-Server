@@ -4,7 +4,7 @@
 Accepted
 
 ## Date
-2026-09-11 (project skeleton; container build added 2026-11-03)
+2026-09-11
 
 ## Context
 The surrounding ecosystem (BedwarsRel-MCA) is a JVM/Bukkit Minecraft plugin, so a
