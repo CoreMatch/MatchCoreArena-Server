@@ -255,14 +255,14 @@ func TestMatchReportScopeMatrix(t *testing.T) {
 	})
 }
 
-// TestMatchReportMissingUsersRowMapping 钉住"参与者缺本地 users 行"的
-// 对外错误形态：类型化的 mca_user_not_provisioned + 409，而不是裸
-// internal_error + 500（运维据此区分数据缺行与真故障）。建行机制本身
-// 待作者决策（PENDING-DECISIONS 第 4 条），此测试只钉错误映射。
-func TestMatchReportMissingUsersRowMapping(t *testing.T) {
+// TestMatchReportProvisioningFailedMapping 钉住"懒建行失败"（如 uid 被
+// 软删除行占用）的对外错误形态：类型化的 mca_user_not_provisioned + 409，
+// 而不是裸 internal_error + 500。正常缺行由结算事务内懒初始化覆盖
+//（见 service 层测试），此码仅在建行不可能时出现。
+func TestMatchReportProvisioningFailedMapping(t *testing.T) {
 	svc := &fakeMatchService{
 		reportErr: apperr.New(apperr.CodeMCAUserNotProvisioned,
-			"参与者 (uid: 7) 本地 users 行缺失，档案未建立"),
+			"参与者 (uid: 7) users 行无法建立（uid 可能被已删除账户占用）"),
 	}
 	r := newMatchRouter(newScopeVerifier(), svc)
 
