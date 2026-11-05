@@ -3,9 +3,6 @@
 ## Status
 Accepted
 
-## Date
-2026-11-04
-
 ## Context
 The baseline schema, the streak query and the match report code path must
 agree on which columns carry team-match results. Separately, several

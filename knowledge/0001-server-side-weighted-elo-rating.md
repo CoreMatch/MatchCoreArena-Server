@@ -3,9 +3,6 @@
 ## Status
 Accepted
 
-## Date
-2026-09-12
-
 ## Context
 MatchCoreArena-Server (MCA) is the rating and leaderboard service of the CoreMatch
 ecosystem. It needs a score model for team-based bedwars-style matches where the

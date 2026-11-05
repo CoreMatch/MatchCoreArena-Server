@@ -3,9 +3,6 @@
 ## Status
 Accepted
 
-## Date
-2026-09-11
-
 ## Context
 The surrounding ecosystem (BedwarsRel-MCA) is a JVM/Bukkit Minecraft plugin, so a
 rating service could in principle have been implemented as part of the Minecraft
