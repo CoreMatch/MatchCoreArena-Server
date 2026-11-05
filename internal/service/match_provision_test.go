@@ -14,7 +14,9 @@ import (
 )
 
 // newFakeHRPAuth 返回一个最小假 HRPAuth：/status 供客户端启动校验，
-// /user/lookup-uuid 把 uuid-1 解析为 uid 7。
+// /oauth/token 为 client_credentials 签发服务令牌，
+// /services/users/uuid-1 把 uuid-1 解析为 uid 7（ops 级服务端点，
+// 契约 hrpauth-business.yaml）。
 func newFakeHRPAuth(t *testing.T) *auth.Client {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -22,15 +24,26 @@ func newFakeHRPAuth(t *testing.T) *auth.Client {
 		switch r.URL.Path {
 		case "/status":
 			w.WriteHeader(http.StatusOK)
-		case "/user/lookup-uuid":
+		case "/oauth/token":
+			if r.FormValue("grant_type") != "client_credentials" {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
 			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{"uid": 7}`))
+			_, _ = w.Write([]byte(`{"success":true,"data":{"access_token":"svc-token","expires_in":3600},"access_token":"svc-token","expires_in":3600}`))
+		case "/services/users/uuid-1":
+			if r.Header.Get("Authorization") != "Bearer svc-token" {
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"success":true,"data":{"uid":7,"uuid":"uuid-1","email":"a@b.c","username":"alice"}}`))
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
 	}))
 	t.Cleanup(srv.Close)
-	cli, err := auth.NewClient(srv.URL, "test-client")
+	cli, err := auth.NewClient(srv.URL, "test-client", "svc-client-id", "svc-client-secret")
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}

@@ -1,7 +1,7 @@
 # MatchCoreArena-Server 应用配置模板
 # 复制为 config.yaml 后按需修改；版本变更由 config 包自动迁移。
 
-version: "1.4.0"
+version: "1.5.0"
 
 server:
   host: "0.0.0.0"
@@ -32,6 +32,12 @@ auth:
     # OAuth2 public client_id，用于 refresh_token 等第一方流程。
     # 默认值与 HRPAuth 配置对齐（hrpauth-webui）。
     public_client_id: "hrpauth-webui"
+    # ops 级服务凭据（client_credentials），用于服务间接点调用，
+    # 如 GET /services/users/{uuid}（结算时解析参与者 uuid→uid）。
+    # 部署时注入 HRPAuth 内置 super client 的凭据（与 Yggdrasil-API 的
+    # core_api.client_id/secret 同源）。留空时该类调用以类型化错误失败。
+    service_client_id: ""
+    service_client_secret: ""
   # 运维超级凭据，拥有所有权限。
   # 首次创建配置文件时会自动生成一个 64 位随机 16 进制字符串。
   maintenance_token: ""

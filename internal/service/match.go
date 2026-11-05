@@ -115,7 +115,19 @@ func (s *matchService) Report(ctx context.Context, reporterUID int64, in TeamRep
 	for _, m := range allMembers {
 		uid, err := s.resolveUID(ctx, m.UUID)
 		if err != nil {
-			return nil, fmt.Errorf("解析用户 UUID (%s) 失败: %w", m.UUID, err)
+			// 类型化错误：参与者不存在（404）/ 服务身份或上游不可用（502），
+			// 不再以裸 internal_error(500) 呈现，便于运维区分。
+			switch {
+			case errors.Is(err, auth.ErrUserNotFound):
+				return nil, apperr.New(apperr.CodeMCAUserNotFound,
+					fmt.Sprintf("参与者 (uuid: %s) 在 HRPAuth 中不存在", m.UUID))
+			case errors.Is(err, auth.ErrServiceAuth):
+				return nil, apperr.New(apperr.CodeOAuthHRPAuthDown,
+					"HRPAuth 服务凭据不可用，无法解析参与者身份")
+			default:
+				return nil, apperr.New(apperr.CodeOAuthHRPAuthDown,
+					fmt.Sprintf("解析参与者 (uuid: %s) 身份失败", m.UUID))
+			}
 		}
 
 		info, err := s.getUserRatingInfo(ctx, tx, uid)
@@ -278,11 +290,14 @@ func (s *matchService) resolveUID(ctx context.Context, uuid string) (int64, erro
 		}
 	}
 
-	// 2. 调用 HRPAuth API
-	uid, err := s.authClient.LookupUserByUUID(uuid)
+	// 2. 调用 HRPAuth API（ops 级服务端点，服务令牌鉴权）
+	uid, err := s.authClient.LookupUserByUUID(ctx, uuid)
 	if err != nil {
 		if errors.Is(err, auth.ErrUserNotFound) {
 			return 0, fmt.Errorf("用户不存在: %w", err)
+		}
+		if errors.Is(err, auth.ErrServiceAuth) {
+			return 0, fmt.Errorf("服务身份不可用: %w", err)
 		}
 		return 0, fmt.Errorf("调用 HRPAuth 失败: %w", err)
 	}
