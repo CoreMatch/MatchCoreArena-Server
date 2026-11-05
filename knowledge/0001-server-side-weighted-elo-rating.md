@@ -4,7 +4,7 @@
 Accepted
 
 ## Date
-2026-09-12 (initial implementation; team-match rework 2026-09-18)
+2026-09-12
 
 ## Context
 MatchCoreArena-Server (MCA) is the rating and leaderboard service of the CoreMatch
@@ -49,13 +49,6 @@ file and its content was not verified for this entry.
     unsuitable for production scale without Redis ZSET or periodic `rank_position`
     updates).
   - Season is hard-coded to 1 in `updateRanking`; there is no season rollover logic.
-  - Known inconsistency: the streak query reads `matches.winner_uid` /
-    `matches.loser_uid`, but the team-match INSERT does not populate those columns,
-    and they are declared `NOT NULL` without defaults in the baseline schema.
-    Behavior therefore depends on MySQL `sql_mode` (insert failure in strict mode,
-    meaningless streaks otherwise). Runtime outcome not verified.
-  - The route comment calls rankings "public", but the endpoints are mounted inside
-    the authenticated group, so a valid token is in fact required.
 
 ## Evidence
 - internal/rating/rating.go::KPlacementStart — constants incl. "CS2 Premier Rating research report" comment
@@ -68,11 +61,7 @@ file and its content was not verified for this entry.
 - internal/service/match.go::Report — transactional report processing
 - internal/service/match.go::scoreUpdate — rank_score floor at 0
 - internal/service/match.go::updateRanking — rankings upsert, season = 1
-- internal/service/match.go:L309-L351 @ eff17842a127f1f2aae984acd61fd343dd357b32 — streak query over winner_uid/loser_uid (snapshot before the 218bb99 rewrite)
-- internal/service/match.go::winner_team_id — team-match INSERT omits winner_uid/loser_uid
-- migrate/migrations/baseline.sql:L61-L62 @ 0950310aafaa90acddc5a45b4f477dd73f8e61d4 — winner_uid/loser_uid NOT NULL without default (snapshot before the eff1784 fix)
 - internal/service/ranking.go::GetTop — real-time top-N query; scale caveat comment inside GetTop
-- api/router.go:L84-L90 @ 218bb999472568105e1eaa8abc55abce97a57ad9 — match and ranking routes; "public" comment at line 88 (snapshot before the 61b960c correction)
 - research-推导三种对局情况的记分权重近似模型.pdf — binary research document, content not verified
 - commit bb8b7c6136b1cf98bc8a40bdbf8294aef2bd9137 — feat: implement elo ranking and match reporting (2026-09-12)
 - commit 6279658307d011791f3a15a166ae81caf1c7c5dd — feat(match): add team match support and participant tracking (2026-09-18)

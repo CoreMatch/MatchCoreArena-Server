@@ -4,7 +4,7 @@
 Accepted
 
 ## Date
-2026-09-11 (scope-gated reporting introduced; team payload format 2026-09-18; service tokens 2026-09-19)
+2026-09-11
 
 ## Context
 MCA does not observe gameplay. It must receive authoritative match results from the
