@@ -3,9 +3,6 @@
 ## Status
 Accepted
 
-## Date
-2026-09-18
-
 ## Context
 Match reports arrive from the Minecraft server, where players are identified by
 Minecraft (Mojang) UUIDs. MCA's own storage and all account data (credentials,

@@ -3,9 +3,6 @@
 ## Status
 Accepted
 
-## Date
-2026-09-11
-
 ## Context
 MCA does not observe gameplay. It must receive authoritative match results from the
 Minecraft-side plugin that runs the matches (BedwarsRel-MCA), and the report

@@ -3,9 +3,6 @@
 ## Status
 Accepted
 
-## Date
-2026-09-11
-
 ## Context
 MCA lives in the HA ecosystem next to HRPAuth (account core),
 HRPAuth-Yggdrasil-API (Minecraft auth protocol), HASkinLib / HASkinProxy

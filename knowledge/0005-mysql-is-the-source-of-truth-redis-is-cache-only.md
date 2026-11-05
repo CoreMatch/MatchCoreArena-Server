@@ -3,9 +3,6 @@
 ## Status
 Accepted
 
-## Date
-2026-09-11
-
 ## Context
 MCA needs durable rating state (users, matches, participants, rankings) plus fast
 lookups for token verification and identity resolution.

@@ -3,9 +3,6 @@
 ## Status
 Accepted
 
-## Date
-2026-11-03
-
 ## Context
 MCA is deployed as a container. Deployment-scoped values (database host,
 HRPAuth URL, credentials) must be injectable without baking them into the image,
