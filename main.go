@@ -69,11 +69,19 @@ func main() {
 	log.Println("Redis 连接成功")
 
 	// 6. 初始化 HRPAuth 客户端（启动时校验 HRPAuth 可达性）
-	hrpauthClient, err := auth.NewClient(appCfg.Auth.HRPAuth.BaseURL, appCfg.Auth.HRPAuth.PublicClientID)
+	hrpauthClient, err := auth.NewClient(
+		appCfg.Auth.HRPAuth.BaseURL,
+		appCfg.Auth.HRPAuth.PublicClientID,
+		appCfg.Auth.HRPAuth.ServiceClientID,
+		appCfg.Auth.HRPAuth.ServiceClientSecret,
+	)
 	if err != nil {
 		log.Fatalf("初始化 HRPAuth 客户端失败: %v", err)
 	}
 	log.Println("HRPAuth 客户端初始化成功")
+	if appCfg.Auth.HRPAuth.ServiceClientID == "" || appCfg.Auth.HRPAuth.ServiceClientSecret == "" {
+		log.Println("警告: auth.hrpauth.service_client_id/secret 未配置，结算参与者身份解析（服务间接点）将失败")
+	}
 
 	// 7. 加载高权限服务凭据 (tokens.yaml)
 	// 路径优先级：环境变量 MCA_TOKENS_PATH > 配置 auth.tokens_path > 默认值。
