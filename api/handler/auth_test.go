@@ -22,7 +22,7 @@ func TestHRPAuthDownCode(t *testing.T) {
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
-	cli, err := auth.NewClient(up.URL, "test-client")
+	cli, err := auth.NewClient(up.URL, "test-client", "", "")
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
