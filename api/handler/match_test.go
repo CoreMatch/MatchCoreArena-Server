@@ -42,25 +42,17 @@ type fakeMatchService struct {
 	lastUID     int64
 	lastInput   service.TeamReportInput
 	reportErr   error // 非 nil 时 Report 返回该错误
+	replayed    bool  // Report 第二返回值（game_id 幂等重放）
 }
 
-func (f *fakeMatchService) Report(_ context.Context, uid int64, in service.TeamReportInput) (*service.Match, error) {
+func (f *fakeMatchService) Report(_ context.Context, uid int64, in service.TeamReportInput) (*service.Match, bool, error) {
 	f.reportCalls++
 	f.lastUID = uid
 	f.lastInput = in
 	if f.reportErr != nil {
-		return nil, f.reportErr
+		return nil, false, f.reportErr
 	}
-	return &service.Match{ID: 42, MatchType: in.MatchType}, nil
-}
-
-func (f *fakeMatchService) ReportVirtual(_ context.Context, uid int64, in service.VirtualReportInput) (*service.VirtualMatchResult, error) {
-	f.reportCalls++
-	f.lastUID = uid
-	if f.reportErr != nil {
-		return nil, f.reportErr
-	}
-	return &service.VirtualMatchResult{Match: service.Match{ID: 43, MatchType: in.MatchType, Source: service.MatchSourceVirtual}}, nil
+	return &service.Match{ID: 42, MatchType: in.MatchType}, f.replayed, nil
 }
 
 func (f *fakeMatchService) GetByID(context.Context, int64) (*service.Match, error) {
@@ -78,7 +70,7 @@ func newMatchRouter(v auth.Verifier, svc service.MatchService) *gin.Engine {
 	r.Use(middleware.RequestID())
 	api := r.Group("/api")
 	api.Use(middleware.Auth(v))
-	h := handler.NewMatchHandler(svc, true)
+	h := handler.NewMatchHandler(svc)
 	api.POST("/matches", h.Report)
 	return r
 }
@@ -92,12 +84,18 @@ const validReportBody = `{
 	"finished_at": "2026-11-05T10:10:00Z"
 }`
 
+// newScopeVerifier 覆盖 scope 与 OPS 两个维度的令牌矩阵：
+//   - tok-report：OPS 级 + match:report scope（允许上报）
+//   - tok-report-player：玩家令牌持 match:report scope 但非 OPS（拒绝）
+//   - tok-plain：普通玩家（拒绝）
+//   - tok-maintenance：运维令牌（OPS，maintenance 穿透 scope）
 func newScopeVerifier() *fakeVerifier {
 	return &fakeVerifier{
 		results: map[string]*auth.TokenResult{
-			"tok-report":      {UID: 7, Scopes: []string{"user.read", "match:report"}},
-			"tok-plain":       {UID: 8, Scopes: []string{"user.read"}},
-			"tok-maintenance": {UID: 9, Scopes: []string{"maintenance"}},
+			"tok-report":        {UID: 7, Scopes: []string{"user.read", "match:report"}, Ops: true},
+			"tok-report-player": {UID: 10, Scopes: []string{"match:report"}, Ops: false},
+			"tok-plain":         {UID: 8, Scopes: []string{"user.read"}},
+			"tok-maintenance":   {UID: 9, Scopes: []string{"maintenance"}, Ops: true},
 		},
 		errs: map[string]error{
 			"tok-expired": auth.ErrTokenExpired,
@@ -139,11 +137,12 @@ func assertEnvelope(t *testing.T, w *httptest.ResponseRecorder) string {
 	return env.Code
 }
 
-// TestMatchReportScopeMatrix 覆盖受保护组 POST /api/matches 的
-// scope 矩阵：有/无 match:report、maintenance 全权、过期/无效令牌、
-// 缺令牌、错误载荷（契约 matchcorearena-business.yaml）。
+// TestMatchReportScopeMatrix 覆盖 POST /api/matches（唯一上报入口）的
+// scope + OPS 矩阵：OPS 且持 match:report 放行、玩家令牌一律拒绝
+//（即使持有 scope）、maintenance 全权、过期/无效/缺令牌、错误载荷
+//（契约 matchcorearena-business.yaml）。
 func TestMatchReportScopeMatrix(t *testing.T) {
-	t.Run("with match:report scope succeeds", func(t *testing.T) {
+	t.Run("ops credential with match:report scope succeeds", func(t *testing.T) {
 		svc := &fakeMatchService{}
 		r := newMatchRouter(newScopeVerifier(), svc)
 
@@ -159,6 +158,32 @@ func TestMatchReportScopeMatrix(t *testing.T) {
 		}
 		if svc.lastInput.MatchType != "bedwars" {
 			t.Errorf("match_type = %q, want bedwars", svc.lastInput.MatchType)
+		}
+	})
+
+	t.Run("idempotent replay answers 200", func(t *testing.T) {
+		svc := &fakeMatchService{replayed: true}
+		r := newMatchRouter(newScopeVerifier(), svc)
+
+		w := doMatch(t, r, "tok-report", validReportBody)
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200 for a game_id replay (body=%s)", w.Code, w.Body.String())
+		}
+	})
+
+	t.Run("player token with match:report scope is rejected 403", func(t *testing.T) {
+		svc := &fakeMatchService{}
+		r := newMatchRouter(newScopeVerifier(), svc)
+
+		w := doMatch(t, r, "tok-report-player", validReportBody)
+		if w.Code != http.StatusForbidden {
+			t.Fatalf("status = %d, want 403 (body=%s)", w.Code, w.Body.String())
+		}
+		if code := assertEnvelope(t, w); code != "oauth_insufficient_scope" {
+			t.Fatalf("code = %q, want oauth_insufficient_scope", code)
+		}
+		if svc.reportCalls != 0 {
+			t.Errorf("Report must not be called for a non-OPS token, got %d calls", svc.reportCalls)
 		}
 	})
 

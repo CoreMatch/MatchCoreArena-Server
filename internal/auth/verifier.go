@@ -11,9 +11,12 @@ import (
 )
 
 // TokenResult token 校验结果。
+// Ops 标记 OPS 级凭据（运维令牌与 tokens.yaml 服务令牌）；
+// 经 HRPAuth /user 校验的玩家令牌为 false。
 type TokenResult struct {
 	UID    int64
 	Scopes []string
+	Ops    bool
 }
 
 // Verifier 定义 token 校验接口。
@@ -50,6 +53,7 @@ func (v *TokenVerifier) Verify(ctx context.Context, token string) (*TokenResult,
 		return &TokenResult{
 			UID:    -1, // 运维专用 UID
 			Scopes: []string{"maintenance"},
+			Ops:    true,
 		}, nil
 	}
 
@@ -59,6 +63,7 @@ func (v *TokenVerifier) Verify(ctx context.Context, token string) (*TokenResult,
 			return &TokenResult{
 				UID:    st.UID,
 				Scopes: st.Scopes,
+				Ops:    true,
 			}, nil
 		}
 	}

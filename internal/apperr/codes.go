@@ -40,6 +40,12 @@ const (
 	CodeMCAQueueAlreadyJoined  Code = "mca_queue_already_joined"
 	CodeMCAQueueNotJoined      Code = "mca_queue_not_joined"
 	CodeMCANotImplemented      Code = "mca_not_implemented"
+	CodeMCAReportInconsistent  Code = "mca_report_inconsistent"
+	CodeMCAGameIDConflict      Code = "mca_game_id_conflict"
+	CodeMCAPartyNotFound       Code = "mca_party_not_found"
+	CodeMCAPartyAlreadyInParty Code = "mca_party_already_in_party"
+	CodeMCAPartyFull           Code = "mca_party_full"
+	CodeMCANotPartyLeader      Code = "mca_not_party_leader"
 )
 
 // codeHTTPMap 将错误码映射到建议 HTTP 状态码。
@@ -67,6 +73,12 @@ var codeHTTPMap = map[Code]int{
 	CodeMCAQueueAlreadyJoined:  http.StatusConflict,
 	CodeMCAQueueNotJoined:      http.StatusNotFound,
 	CodeMCANotImplemented:      http.StatusNotImplemented,
+	CodeMCAReportInconsistent:  http.StatusBadRequest,
+	CodeMCAGameIDConflict:      http.StatusConflict,
+	CodeMCAPartyNotFound:       http.StatusNotFound,
+	CodeMCAPartyAlreadyInParty: http.StatusConflict,
+	CodeMCAPartyFull:           http.StatusConflict,
+	CodeMCANotPartyLeader:      http.StatusForbidden,
 }
 
 // StatusFromCode 根据错误码返回建议 HTTP 状态码，未注册的码返回 500。

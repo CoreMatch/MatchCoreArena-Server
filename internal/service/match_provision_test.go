@@ -38,6 +38,13 @@ func newFakeHRPAuth(t *testing.T) *auth.Client {
 			}
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{"success":true,"data":{"uid":7,"uuid":"uuid-1","email":"a@b.c","username":"alice"}}`))
+		case "/services/users/uuid-2":
+			if r.Header.Get("Authorization") != "Bearer svc-token" {
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"success":true,"data":{"uid":8,"uuid":"uuid-2","email":"b@b.c","username":"bob"}}`))
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -50,8 +57,9 @@ func newFakeHRPAuth(t *testing.T) *auth.Client {
 	return cli
 }
 
-// singleWinnerReport 返回最小合法上报：胜队一名参与者（uuid-1），
-// 无负队。所有评分字段留零值——建行与初始积分必须来自系统默认。
+// singleWinnerReport 返回最小合法上报：胜队一名参与者（uuid-1）对
+// 败队一名参与者（uuid-2）。所有评分字段留零值——建行与初始积分
+// 必须来自系统默认。
 func singleWinnerReport() service.TeamReportInput {
 	return service.TeamReportInput{
 		MatchType: "bedwars",
@@ -61,35 +69,50 @@ func singleWinnerReport() service.TeamReportInput {
 			AliveCount:   1,
 			Members:      []service.ParticipantReport{{UUID: "uuid-1"}},
 		},
+		LoserTeams: []service.TeamInfo{{
+			TeamID:       "B",
+			InitialCount: 1,
+			AliveCount:   1,
+			Members:      []service.ParticipantReport{{UUID: "uuid-2"}},
+		}},
 		StartedAt:  "2026-11-05T10:00:00Z",
 		FinishedAt: "2026-11-05T10:10:00Z",
 	}
 }
 
 // expectFullSettlementAfterRating 登记"评分信息已就绪后"的完整结算
-// SQL 期望（matches 主表 → 连胜查询 → users 更新 → 参与者明细 → 排行榜）。
+// SQL 期望（matches 主表 11 列 → 双方连胜查询 → 逐个写入：users 更新
+// → 参与者明细 10 列 → 排行榜）。
 func expectFullSettlementAfterRating(mock sqlmock.Sqlmock) {
 	mock.ExpectExec(`INSERT INTO matches`).
 		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
-			sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
+			sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
+			sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
+			sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectQuery(`SELECT mp\.is_winner`).
 		WithArgs(int64(7)).
 		WillReturnRows(sqlmock.NewRows([]string{"is_winner"}))
-	mock.ExpectExec(`UPDATE users SET rank_score`).
-		WithArgs(sqlmock.AnyArg(), int64(7)).
-		WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec(`INSERT INTO match_participants`).
-		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
-			sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
-			sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
-		WillReturnResult(sqlmock.NewResult(1, 1))
-	mock.ExpectQuery(`SELECT rank_score FROM users WHERE uid = \?`).
-		WithArgs(int64(7)).
-		WillReturnRows(sqlmock.NewRows([]string{"rank_score"}).AddRow(25))
-	mock.ExpectExec(`INSERT INTO rankings`).
-		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
-		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(`SELECT mp\.is_winner`).
+		WithArgs(int64(8)).
+		WillReturnRows(sqlmock.NewRows([]string{"is_winner"}))
+	for _, uid := range []int64{7, 8} {
+		mock.ExpectExec(`UPDATE users SET rank_score`).
+			WithArgs(sqlmock.AnyArg(), uid).
+			WillReturnResult(sqlmock.NewResult(0, 1))
+		mock.ExpectExec(`INSERT INTO match_participants`).
+			WithArgs(sqlmock.AnyArg(), uid, sqlmock.AnyArg(),
+				sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
+				sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
+				sqlmock.AnyArg()).
+			WillReturnResult(sqlmock.NewResult(1, 1))
+		mock.ExpectQuery(`SELECT rank_score FROM users WHERE uid = \?`).
+			WithArgs(uid).
+			WillReturnRows(sqlmock.NewRows([]string{"rank_score"}).AddRow(25))
+		mock.ExpectExec(`INSERT INTO rankings`).
+			WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
+			WillReturnResult(sqlmock.NewResult(0, 1))
+	}
 	mock.ExpectCommit()
 }
 
@@ -120,11 +143,18 @@ func TestReportLazyProvisioning(t *testing.T) {
 	mock.ExpectQuery(`SELECT rank_score, wins_count FROM users WHERE uid = \? AND deleted_at IS NULL`).
 		WithArgs(int64(7)).
 		WillReturnRows(sqlmock.NewRows([]string{"rank_score", "wins_count"}).AddRow(0, 0))
+	// 败方参与者：本地已有行。
+	mock.ExpectQuery(`SELECT rank_score, wins_count FROM users WHERE uid = \? AND deleted_at IS NULL`).
+		WithArgs(int64(8)).
+		WillReturnRows(sqlmock.NewRows([]string{"rank_score", "wins_count"}).AddRow(0, 0))
 	expectFullSettlementAfterRating(mock)
 
-	m, err := svc.Report(t.Context(), 1, singleWinnerReport())
+	m, replayed, err := svc.Report(t.Context(), 1, singleWinnerReport())
 	if err != nil {
 		t.Fatalf("lazy provisioning should settle the match, got: %v", err)
+	}
+	if replayed {
+		t.Error("report without game_id must not be a replay")
 	}
 	if m.ID != 1 || m.MatchType != "bedwars" {
 		t.Fatalf("unexpected match result: %+v", m)
@@ -152,9 +182,12 @@ func TestReportProvisioningIdempotent(t *testing.T) {
 	mock.ExpectQuery(`SELECT rank_score, wins_count FROM users WHERE uid = \? AND deleted_at IS NULL`).
 		WithArgs(int64(7)).
 		WillReturnRows(sqlmock.NewRows([]string{"rank_score", "wins_count"}).AddRow(100, 3))
+	mock.ExpectQuery(`SELECT rank_score, wins_count FROM users WHERE uid = \? AND deleted_at IS NULL`).
+		WithArgs(int64(8)).
+		WillReturnRows(sqlmock.NewRows([]string{"rank_score", "wins_count"}).AddRow(0, 0))
 	expectFullSettlementAfterRating(mock)
 
-	if _, err := svc.Report(t.Context(), 1, singleWinnerReport()); err != nil {
+	if _, _, err := svc.Report(t.Context(), 1, singleWinnerReport()); err != nil {
 		t.Fatalf("existing row should settle without provisioning, got: %v", err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -188,7 +221,7 @@ func TestReportProvisioningImpossible(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"rank_score", "wins_count"}))
 	mock.ExpectRollback()
 
-	_, err = svc.Report(t.Context(), 1, singleWinnerReport())
+	_, _, err = svc.Report(t.Context(), 1, singleWinnerReport())
 	if err == nil {
 		t.Fatal("expected an error when provisioning is impossible")
 	}
