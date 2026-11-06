@@ -1,4 +1,4 @@
-# 0005. MySQL Is the Single Source of Truth; Baseline-Only Embedded Migrations; Redis Is Cache-Only
+# 0005. MySQL Is the Single Source of Truth; Versioned Embedded Migrations; Redis Is Cache-Only
 
 ## Status
 Accepted
@@ -8,14 +8,17 @@ MCA needs durable rating state (users, matches, participants, rankings) plus fas
 lookups for token verification and identity resolution.
 
 ## Decision
-- MySQL (InnoDB, utf8mb4) holds all persistent state: `users`, `friends`, `teams`,
-  `team_members`, `matches`, `match_participants`, `rankings`.
-- Schema bootstrapping is baseline-only: at startup the embedded `baseline.sql`
-  runs if and only if the database contains zero tables. There is no migration
-  version tracking table and no incremental migration runner.
-- Schema changes take effect only on a fresh database or when executed
-  manually (e.g. through the raw-SQL maintenance endpoint); there is no
-  incremental migration mechanism for already-initialized databases.
+- MySQL (InnoDB, utf8mb4) holds all persistent state: `users`, `friends`,
+  `teams`, `team_members`, `matches`, `match_participants`,
+  `matchmaking_queue`, `matchmaking_parties`, `matchmaking_party_members`,
+  `matchmaking_groups`, `matchmaking_group_members`, `rankings`, plus the
+  migration bookkeeping table `schema_migrations`.
+- Schema bootstrapping is a versioned embedded migration chain (see 0017):
+  numbered migrations run in order at startup under an advisory lock and are
+  recorded in `schema_migrations`; v1 is the frozen baseline (the starting
+  point of a fresh database, re-runnable because it is all
+  `CREATE TABLE IF NOT EXISTS`), later versions are additive and guarded by
+  `information_schema` checks.
 - Redis is used strictly as a cache with TTLs, never as a source of truth:
   token verification results (5 min), UUID→UID mappings (24 h), and username
   lookups for friend requests (10 min). Leaderboards are read from MySQL, not
@@ -23,11 +26,8 @@ lookups for token verification and identity resolution.
 
 ## Consequences
 - Costs and limitations:
-  - Existing databases receive no automatic schema evolution; operators must run
-    incremental SQL by hand, and there is no rollback mechanism.
-  - Because the baseline is skipped as soon as any table exists, a partially
-    created database (e.g. a failed first run) will never be completed
-    automatically.
+  - Schema evolution is additive-only: migrations never alter or drop
+    existing columns, so obsolete columns stay in place (see 0017).
   - All durable-state risk concentrates on a single MySQL instance; no replication
     or backup tooling is defined in this repository.
   - Cache staleness windows are bounded only by TTL (see 0003 for the UUID→UID
@@ -35,11 +35,11 @@ lookups for token verification and identity resolution.
   - Ranking reads scale linearly with table size (see 0001).
 
 ## Evidence
-- main.go::parseTime — MySQL DSN (utf8mb4, parseTime) and pool setup
-- migrate/migrate.go::RunMigrations — baseline runs only; no version tracking
-- migrate/migrate.go::isInitialized — isInitialized: skip when any table exists
+- main.go::main — MySQL DSN (utf8mb4, parseTime), pool setup, migrations at startup
+- migrate/migrate.go::ApplyMigrations — versioned chain, advisory lock, record-after-success
+- migrate/m001_baseline.go::runBaseline — frozen baseline v1
 - migrate/embed.go::MigrationsFS — `//go:embed migrations/*.sql`
-- migrate/migrations/baseline.sql::match_participants — full schema (users, friends, teams, team_members, matches, match_participants, rankings)
+- migrate/migrations/baseline.sql::match_participants — baseline schema
 - internal/auth/verifier.go::Verify — token verification cache, 5-minute TTL
 - internal/service/match.go::resolveUID — UUID→UID cache, 24-hour TTL
 - api/handler/friend.go::Request — username lookup cache, 10-minute TTL
