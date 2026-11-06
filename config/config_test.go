@@ -212,12 +212,137 @@ matchmaking:
 	if err != nil {
 		t.Fatalf("1.6.0 配置应能迁移加载: %v", err)
 	}
-	if cfg.Version != "1.7.0" {
-		t.Errorf("版本号不匹配: 期望 1.7.0, 实际 %s", cfg.Version)
+	if cfg.Version != CurrentVersion {
+		t.Errorf("版本号不匹配: 期望 %s, 实际 %s", CurrentVersion, cfg.Version)
 	}
 	if !cfg.Matchmaking.Enabled {
 		t.Error("迁移后匹配系统应保持启用")
 	}
+}
+
+// TestLoad_Migrates170To180 覆盖 1.7.0 → 1.8.0 迁移：新增可空的
+// matchmaking.join_target；旧配置无该块时视为未配置，加载成功。
+func TestLoad_Migrates170To180(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+
+	configContent := `version: "1.7.0"
+server:
+  host: "127.0.0.1"
+  port: 9178
+database:
+  host: "localhost"
+  port: 3306
+  user: "u"
+  password: "p"
+  name: "d"
+redis:
+  host: "localhost"
+  port: 6379
+auth:
+  hrpauth:
+    base_url: "http://localhost:2778"
+  maintenance_token: "t"
+matchmaking:
+  enabled: true
+  tick_seconds: 1
+  queue_timeout_seconds: 300
+  base_rating_window: 200
+  rating_window_growth_per_minute: 100
+  max_rating_window: 1000
+  modes:
+    - match_type: "1v1"
+      team_sizes: [1, 1]
+`
+	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+		t.Fatalf("写入测试配置文件失败: %v", err)
+	}
+
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("1.7.0 配置应能迁移加载: %v", err)
+	}
+	if cfg.Version != CurrentVersion {
+		t.Errorf("版本号不匹配: 期望 %s, 实际 %s", CurrentVersion, cfg.Version)
+	}
+	if cfg.Matchmaking.JoinTarget.Configured() {
+		t.Error("未配置 join_target 时 Configured 应为 false")
+	}
+}
+
+// TestLoad_JoinTargetValidation 覆盖 join_target 校验：配置 host 时
+// port 必须合法；未配置 host 时 port 任意值均视为未配置。
+func TestLoad_JoinTargetValidation(t *testing.T) {
+	base := `version: "1.8.0"
+server:
+  host: "127.0.0.1"
+  port: 9178
+database:
+  host: "localhost"
+  port: 3306
+  user: "u"
+  password: "p"
+  name: "d"
+redis:
+  host: "localhost"
+  port: 6379
+auth:
+  hrpauth:
+    base_url: "http://localhost:2778"
+  maintenance_token: "t"
+matchmaking:
+  enabled: true
+  tick_seconds: 1
+  queue_timeout_seconds: 300
+  base_rating_window: 200
+  rating_window_growth_per_minute: 100
+  max_rating_window: 1000
+  modes:
+    - match_type: "1v1"
+      team_sizes: [1, 1]
+`
+	t.Run("host with valid port loads", func(t *testing.T) {
+		configPath := filepath.Join(t.TempDir(), "config.yaml")
+		content := base + "  join_target:\n    host: \"play.example.com\"\n    port: 25565\n"
+		if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := Load(configPath)
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if !cfg.Matchmaking.JoinTarget.Configured() ||
+			cfg.Matchmaking.JoinTarget.Host != "play.example.com" ||
+			cfg.Matchmaking.JoinTarget.Port != 25565 {
+			t.Errorf("join_target = %+v, want play.example.com:25565", cfg.Matchmaking.JoinTarget)
+		}
+	})
+
+	t.Run("host with invalid port rejected", func(t *testing.T) {
+		configPath := filepath.Join(t.TempDir(), "config.yaml")
+		content := base + "  join_target:\n    host: \"play.example.com\"\n    port: 0\n"
+		if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Load(configPath); err == nil {
+			t.Fatal("host 已配置而 port 非法时应报错")
+		}
+	})
+
+	t.Run("empty host stays unconfigured regardless of port", func(t *testing.T) {
+		configPath := filepath.Join(t.TempDir(), "config.yaml")
+		content := base + "  join_target:\n    host: \"\"\n    port: 25565\n"
+		if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := Load(configPath)
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.Matchmaking.JoinTarget.Configured() {
+			t.Error("host 为空时应视为未配置")
+		}
+	})
 }
 
 func TestLoad_CreatesDirectoryIfMissing(t *testing.T) {

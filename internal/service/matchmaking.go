@@ -36,12 +36,21 @@ type GroupMember struct {
 	PartyID   int64  `json:"party_id,omitempty"`
 }
 
+// JoinTarget 成局下发的游戏服务器地址（交接链路用）。
+// 字段名与 MCA 客户端 interop 载荷的 join_target 对齐；服务端未配置
+// 时整个字段省略（omitempty），客户端回落本地配置。
+type JoinTarget struct {
+	Host string `json:"host"`
+	Port int    `json:"port"`
+}
+
 // FormedGroup 匹配成局记录。
 type FormedGroup struct {
-	GroupID   int64         `json:"group_id"`
-	MatchType string        `json:"match_type"`
-	FormedAt  string        `json:"formed_at"`
-	Members   []GroupMember `json:"members"`
+	GroupID    int64         `json:"group_id"`
+	MatchType  string        `json:"match_type"`
+	FormedAt   string        `json:"formed_at"`
+	Members    []GroupMember `json:"members"`
+	JoinTarget *JoinTarget   `json:"join_target,omitempty"`
 }
 
 // MatchmakingStatus 用户当前匹配状态。
@@ -400,7 +409,20 @@ func (s *matchmakingService) Status(ctx context.Context, uid int64) (*Matchmakin
 		}
 		st.RecentGroups[i].Members = members
 	}
+	s.attachJoinTarget(st.RecentGroups)
 	return st, nil
+}
+
+// attachJoinTarget 为成局记录附加游戏服务器地址（仅当配置了
+// matchmaking.join_target 时）；未配置则字段省略，客户端行为不变。
+func (s *matchmakingService) attachJoinTarget(groups []FormedGroup) {
+	if !s.cfg.JoinTarget.Configured() {
+		return
+	}
+	jt := &JoinTarget{Host: s.cfg.JoinTarget.Host, Port: s.cfg.JoinTarget.Port}
+	for i := range groups {
+		groups[i].JoinTarget = jt
+	}
 }
 
 func (s *matchmakingService) groupMembers(ctx context.Context, groupID int64) ([]GroupMember, error) {

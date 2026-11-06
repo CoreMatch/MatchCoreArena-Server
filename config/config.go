@@ -27,7 +27,7 @@ import (
 //  1. 将 CurrentVersion 提升到新版本；
 //  2. 在 migrations 列表中追加对应的迁移函数；
 //  3. 在 config.example.yaml 中同步更新。
-const CurrentVersion = "1.7.0"
+const CurrentVersion = "1.8.0"
 
 // AppConfig 应用配置根结构。
 type AppConfig struct {
@@ -44,13 +44,26 @@ type AppConfig struct {
 // 窗口随等待时长线性放宽（BaseRatingWindow + 每分钟增长，封顶 MaxRatingWindow），
 // 超过 QueueTimeoutSeconds 未成局的记录被移除。
 type MatchmakingConfig struct {
-	Enabled                     bool        `yaml:"enabled"`
-	TickSeconds                 int         `yaml:"tick_seconds"`
-	QueueTimeoutSeconds         int         `yaml:"queue_timeout_seconds"`
-	BaseRatingWindow            int         `yaml:"base_rating_window"`
-	RatingWindowGrowthPerMinute int         `yaml:"rating_window_growth_per_minute"`
-	MaxRatingWindow             int         `yaml:"max_rating_window"`
-	Modes                       []MatchMode `yaml:"modes"`
+	Enabled                     bool             `yaml:"enabled"`
+	TickSeconds                 int              `yaml:"tick_seconds"`
+	QueueTimeoutSeconds         int              `yaml:"queue_timeout_seconds"`
+	BaseRatingWindow            int              `yaml:"base_rating_window"`
+	RatingWindowGrowthPerMinute int              `yaml:"rating_window_growth_per_minute"`
+	MaxRatingWindow             int              `yaml:"max_rating_window"`
+	Modes                       []MatchMode      `yaml:"modes"`
+	JoinTarget                  JoinTargetConfig `yaml:"join_target"`
+}
+
+// JoinTargetConfig 成局后下发给客户端的游戏服务器地址（交接链路用）。
+// 可空：host 为空视为未配置，成局响应不返回该字段，客户端回落本地配置。
+type JoinTargetConfig struct {
+	Host string `yaml:"host"`
+	Port int    `yaml:"port"`
+}
+
+// Configured 判断游戏服务器地址是否已配置（host 非空即启用）。
+func (c JoinTargetConfig) Configured() bool {
+	return c.Host != ""
 }
 
 // MatchMode 描述一种可排队的对战模式：各队人数。
@@ -293,6 +306,16 @@ var migrations = []migration{
 			return in, nil
 		},
 	},
+	{
+		from: "1.7.0",
+		to:   "1.8.0",
+		run: func(in rawConfig) (rawConfig, error) {
+			// 新增 matchmaking.join_target（游戏服务器地址，可空）。
+			// 缺省即"未配置"：成局响应不下发，客户端回落本地配置，
+			// 无需向旧配置写入任何默认值。
+			return in, nil
+		},
+	},
 }
 
 // Load 从指定路径加载配置文件，并完成版本校验/迁移，最终反序列化为 AppConfig。
@@ -445,6 +468,11 @@ func validate(cfg *AppConfig) error {
 				return fmt.Errorf("matchmaking.modes[%s].team_sizes 必须全部为正数", mode.MatchType)
 			}
 		}
+	}
+	// join_target 校验（1.8.0+）：host 为空视为未配置；配置了 host 则
+	// port 必须为合法端口。
+	if mm.JoinTarget.Configured() && (mm.JoinTarget.Port <= 0 || mm.JoinTarget.Port > 65535) {
+		return fmt.Errorf("matchmaking.join_target.port 非法: %d（配置 host 时端口必须在 1-65535）", mm.JoinTarget.Port)
 	}
 	return nil
 }
