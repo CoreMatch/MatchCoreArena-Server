@@ -7,47 +7,75 @@ import (
 	"MatchCoreArena-Server/config"
 )
 
-// TestAssignTeamsSnakeDraft 覆盖蛇形分队：评分降序后
-// 1 号位→A、2 号位→B、3 号位→B、4 号位→A（2v2）。
-func TestAssignTeamsSnakeDraft(t *testing.T) {
-	mode := config.MatchMode{MatchType: "2v2", TeamSizes: []int{2, 2}}
-	selected := []queueRow{
-		{UID: 1, RankScore: 1000},
-		{UID: 2, RankScore: 1600},
-		{UID: 3, RankScore: 1400},
-		{UID: 4, RankScore: 1200},
+// TestBuildUnits 覆盖队列行聚合为匹配单位：同 party_id 的行合并为
+// 一队（评分取平均、等待取最长），单人各自成单位。
+func TestBuildUnits(t *testing.T) {
+	queue := []queueRow{
+		{ID: 1, UID: 11, RankScore: 1000, PartyID: 5, WaitedSeconds: 40},
+		{ID: 2, UID: 12, RankScore: 1100, PartyID: 5, WaitedSeconds: 30},
+		{ID: 3, UID: 13, RankScore: 1500, PartyID: 0, WaitedSeconds: 20},
 	}
 
-	got := assignTeams(mode, selected)
-	if len(got) != 4 {
-		t.Fatalf("assignments = %d, want 4", len(got))
+	units := buildUnits(queue)
+	if len(units) != 2 {
+		t.Fatalf("units = %d, want 2", len(units))
 	}
-	teamOf := map[int64]string{}
-	for _, a := range got {
-		teamOf[a.row.UID] = a.teamID
+
+	party := units[0]
+	if party.partyID != 5 || len(party.rows) != 2 {
+		t.Fatalf("party unit = %+v, want party 5 with 2 rows", party)
 	}
-	// 降序：1600(2)→A，1400(3)→B，1200(4)→B，1000(1)→A。
-	want := map[int64]string{2: "A", 3: "B", 4: "B", 1: "A"}
-	for uid, team := range want {
-		if teamOf[uid] != team {
-			t.Errorf("uid %d team = %q, want %q", uid, teamOf[uid], team)
-		}
+	if party.rating != 1050 {
+		t.Errorf("party rating = %d, want 1050 (average)", party.rating)
+	}
+	if party.waited != 40 {
+		t.Errorf("party waited = %d, want 40 (max of members)", party.waited)
+	}
+
+	solo := units[1]
+	if solo.partyID != 0 || len(solo.rows) != 1 || solo.rating != 1500 {
+		t.Errorf("solo unit = %+v, want single row rating 1500", solo)
 	}
 }
 
-// TestAssignTeamsSolo 覆盖 1v1：两人各成一队（A、B）。
-func TestAssignTeamsSolo(t *testing.T) {
-	mode := config.MatchMode{MatchType: "1v1", TeamSizes: []int{1, 1}}
-	got := assignTeams(mode, []queueRow{
-		{UID: 1, RankScore: 100},
-		{UID: 2, RankScore: 200},
+// TestPackUnits 覆盖贪心装箱：队伍不可拆分、装满全部队伍才成功。
+func TestPackUnits(t *testing.T) {
+	t.Run("party stays together", func(t *testing.T) {
+		party := &matchUnit{rows: []queueRow{{UID: 1}, {UID: 2}}, rating: 1000}
+		soloA := &matchUnit{rows: []queueRow{{UID: 3}}, rating: 1000}
+		soloB := &matchUnit{rows: []queueRow{{UID: 4}}, rating: 1000}
+
+		packed := packUnits([]*matchUnit{party, soloA, soloB}, []int{2, 2})
+		if packed == nil {
+			t.Fatal("expected a full packing")
+		}
+		if len(packed) != 3 {
+			t.Fatalf("packed = %d units, want 3", len(packed))
+		}
+		if packed[0].unit != party || packed[0].teamIdx != 0 {
+			t.Errorf("party must fill team 0 whole, got %+v", packed[0])
+		}
+		if packed[1].teamIdx != 1 || packed[2].teamIdx != 1 {
+			t.Errorf("solos must share team 1, got %d/%d", packed[1].teamIdx, packed[2].teamIdx)
+		}
 	})
-	if got[0].teamID != "A" || got[1].teamID != "B" {
-		t.Fatalf("teams = %q/%q, want A/B", got[0].teamID, got[1].teamID)
-	}
-	if got[0].row.UID != 2 {
-		t.Errorf("first assignment uid = %d, want 2 (higher rating first)", got[0].row.UID)
-	}
+
+	t.Run("oversized party cannot be split", func(t *testing.T) {
+		big := &matchUnit{rows: []queueRow{{UID: 1}, {UID: 2}, {UID: 3}}, rating: 1000}
+		solo := &matchUnit{rows: []queueRow{{UID: 4}}, rating: 1000}
+
+		// 2v2：3 人队伍装不进任何单队（上限 2），无法装满 → nil。
+		if got := packUnits([]*matchUnit{big, solo}, []int{2, 2}); got != nil {
+			t.Fatalf("packing must fail for an oversized party, got %+v", got)
+		}
+	})
+
+	t.Run("not enough candidates", func(t *testing.T) {
+		solo := &matchUnit{rows: []queueRow{{UID: 1}}, rating: 1000}
+		if got := packUnits([]*matchUnit{solo}, []int{1, 1}); got != nil {
+			t.Fatalf("packing must fail when candidates cannot fill all teams, got %+v", got)
+		}
+	})
 }
 
 // TestRatingWindow 覆盖分差窗口随等待时长线性放宽并封顶。

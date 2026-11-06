@@ -16,7 +16,7 @@ import (
 )
 
 // Register 装配所有 API 路由。
-// appCfg 提供虚拟对局开关与匹配系统配置。
+// appCfg 提供匹配系统配置。
 func Register(r *gin.Engine, db *sql.DB, oauthClient *auth.Client, ver auth.Verifier, rdb *goredis.Client, version string, appCfg config.AppConfig) {
 	// 全局中间件
 	r.Use(middleware.RequestID())
@@ -29,17 +29,18 @@ func Register(r *gin.Engine, db *sql.DB, oauthClient *auth.Client, ver auth.Veri
 	matchSvc := service.NewMatchService(db, oauthClient, rdb)
 	rankingSvc := service.NewRankingService(db)
 	maintenanceSvc := service.NewMaintenanceService(db)
-	matchmakingSvc := service.NewMatchmakingService(db, appCfg.Matchmaking)
+	matchmakingSvc := service.NewMatchmakingService(db, appCfg.Matchmaking, oauthClient, rdb)
 
 	// 初始化 handler 层
 	authH := handler.NewAuthHandler(oauthClient, ver)
 	userH := handler.NewUserHandler(userSvc)
 	friendH := handler.NewFriendHandler(friendSvc, oauthClient, rdb)
 	teamH := handler.NewTeamHandler(teamSvc)
-	matchH := handler.NewMatchHandler(matchSvc, appCfg.VirtualMatches.Enabled)
+	matchH := handler.NewMatchHandler(matchSvc)
 	rankingH := handler.NewRankingHandler(rankingSvc)
 	maintenanceH := handler.NewMaintenanceHandler(maintenanceSvc)
 	matchmakingH := handler.NewMatchmakingHandler(matchmakingSvc)
+	metricsH := handler.NewMetricsHandler(matchmakingSvc)
 
 	// 公开端点
 	r.GET("/api/status", func(c *gin.Context) {
@@ -66,6 +67,7 @@ func Register(r *gin.Engine, db *sql.DB, oauthClient *auth.Client, ver auth.Veri
 		// users
 		api.GET("/users/me", userH.GetMe)
 		api.GET("/users/:uid", userH.GetByUID)
+		api.GET("/users/:uid/matches", matchH.ListByUser)
 		api.POST("/users/me/experience", userH.AddExperience)
 
 		// friends
@@ -84,9 +86,8 @@ func Register(r *gin.Engine, db *sql.DB, oauthClient *auth.Client, ver auth.Veri
 		api.PUT("/teams/:id/members/:uid/role", teamH.UpdateMemberRole)
 		api.DELETE("/teams/:id/members/:uid", teamH.RemoveMember)
 
-		// matches
+		// matches（唯一上报入口，仅 OPS 级凭据）
 		api.POST("/matches", matchH.Report)
-		api.POST("/matches/virtual", matchH.Virtual)
 		api.GET("/matches/:id", matchH.GetByID)
 		api.GET("/matches/me", matchH.ListByMe)
 
@@ -94,6 +95,9 @@ func Register(r *gin.Engine, db *sql.DB, oauthClient *auth.Client, ver auth.Veri
 		api.POST("/matchmaking/join", matchmakingH.Join)
 		api.DELETE("/matchmaking/leave", matchmakingH.Leave)
 		api.GET("/matchmaking/status", matchmakingH.Status)
+
+		// metrics（仅 OPS 级凭据）
+		api.GET("/metrics", metricsH.Metrics)
 
 		// rankings（需要鉴权：与该组其他端点一致）
 		api.GET("/rankings/:type", rankingH.GetTop)

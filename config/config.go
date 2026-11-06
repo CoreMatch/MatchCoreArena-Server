@@ -27,24 +27,16 @@ import (
 //  1. 将 CurrentVersion 提升到新版本；
 //  2. 在 migrations 列表中追加对应的迁移函数；
 //  3. 在 config.example.yaml 中同步更新。
-const CurrentVersion = "1.6.0"
+const CurrentVersion = "1.7.0"
 
 // AppConfig 应用配置根结构。
 type AppConfig struct {
-	Version        string               `yaml:"version"`
-	Server         ServerConfig         `yaml:"server"`
-	Database       DatabaseConfig       `yaml:"database"`
-	Redis          RedisConfig          `yaml:"redis"`
-	Auth           AuthConfig           `yaml:"auth"`
-	VirtualMatches VirtualMatchesConfig `yaml:"virtual_matches"`
-	Matchmaking    MatchmakingConfig    `yaml:"matchmaking"`
-}
-
-// VirtualMatchesConfig 虚拟对局配置。
-// 虚拟对局不依赖游戏侧连接，由持有 match:report scope 的调用方直接灌入
-// 对局数据完成定级结算（见 POST /api/matches/virtual）。
-type VirtualMatchesConfig struct {
-	Enabled bool `yaml:"enabled"`
+	Version     string            `yaml:"version"`
+	Server      ServerConfig      `yaml:"server"`
+	Database    DatabaseConfig    `yaml:"database"`
+	Redis       RedisConfig       `yaml:"redis"`
+	Auth        AuthConfig        `yaml:"auth"`
+	Matchmaking MatchmakingConfig `yaml:"matchmaking"`
 }
 
 // MatchmakingConfig 匹配系统配置。
@@ -291,6 +283,16 @@ var migrations = []migration{
 			return in, nil
 		},
 	},
+	{
+		from: "1.6.0",
+		to:   "1.7.0",
+		run: func(in rawConfig) (rawConfig, error) {
+			// 对局上报收敛为单一入口 POST /api/matches，
+			// 移除虚拟对局独立开关。
+			delete(in, "virtual_matches")
+			return in, nil
+		},
+	},
 }
 
 // Load 从指定路径加载配置文件，并完成版本校验/迁移，最终反序列化为 AppConfig。
@@ -497,7 +499,6 @@ func createDefaultConfig(path string) error {
 			},
 			MaintenanceToken: generateRandomToken(32),
 		},
-		VirtualMatches: VirtualMatchesConfig{Enabled: true},
 		Matchmaking: MatchmakingConfig{
 			Enabled:                     true,
 			TickSeconds:                 1,

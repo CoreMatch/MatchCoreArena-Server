@@ -16,129 +16,35 @@ import (
 	"MatchCoreArena-Server/internal/service"
 )
 
-// validVirtualBody 满足 VirtualReportInput 必填字段的最小载荷。
-const validVirtualBody = `{
-	"match_type": "1v1",
-	"teams": [
-		{"team_id": "A", "result": "win", "initial_count": 1, "alive_count": 1, "members": [{"uuid": "p1"}]},
-		{"team_id": "B", "result": "lose", "initial_count": 1, "alive_count": 1, "members": [{"uuid": "p2"}]}
-	]
-}`
-
-// newVirtualRouter 装配带鉴权中间件的 POST /api/matches/virtual 路由。
-func newVirtualRouter(v auth.Verifier, svc service.MatchService, enabled bool) *gin.Engine {
-	gin.SetMode(gin.TestMode)
-	r := gin.New()
-	r.Use(middleware.RequestID())
-	api := r.Group("/api")
-	api.Use(middleware.Auth(v))
-	h := handler.NewMatchHandler(svc, enabled)
-	api.POST("/matches/virtual", h.Virtual)
-	return r
-}
-
-func doVirtual(t *testing.T, r *gin.Engine, token, body string) *httptest.ResponseRecorder {
-	t.Helper()
-	req := httptest.NewRequest(http.MethodPost, "/api/matches/virtual", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
-	}
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-	return w
-}
-
-// TestVirtualMatchScopeMatrix 覆盖虚拟对局入口的 scope 矩阵与开关
-//（契约 matchcorearena-business.yaml POST /api/matches/virtual）。
-func TestVirtualMatchScopeMatrix(t *testing.T) {
-	t.Run("with match:report scope succeeds", func(t *testing.T) {
-		svc := &fakeMatchService{}
-		r := newVirtualRouter(newScopeVerifier(), svc, true)
-
-		w := doVirtual(t, r, "tok-report", validVirtualBody)
-		if w.Code != http.StatusCreated {
-			t.Fatalf("status = %d, want 201 (body=%s)", w.Code, w.Body.String())
-		}
-		if svc.reportCalls != 1 {
-			t.Fatalf("expected ReportVirtual to be called once, got %d", svc.reportCalls)
-		}
-	})
-
-	t.Run("without match:report scope is rejected 403", func(t *testing.T) {
-		svc := &fakeMatchService{}
-		r := newVirtualRouter(newScopeVerifier(), svc, true)
-
-		w := doVirtual(t, r, "tok-plain", validVirtualBody)
-		if w.Code != http.StatusForbidden {
-			t.Fatalf("status = %d, want 403 (body=%s)", w.Code, w.Body.String())
-		}
-		if code := assertEnvelope(t, w); code != "oauth_insufficient_scope" {
-			t.Fatalf("code = %q, want oauth_insufficient_scope", code)
-		}
-		if svc.reportCalls != 0 {
-			t.Errorf("ReportVirtual must not be called without the scope, got %d calls", svc.reportCalls)
-		}
-	})
-
-	t.Run("maintenance scope grants access", func(t *testing.T) {
-		svc := &fakeMatchService{}
-		r := newVirtualRouter(newScopeVerifier(), svc, true)
-
-		w := doVirtual(t, r, "tok-maintenance", validVirtualBody)
-		if w.Code != http.StatusCreated {
-			t.Fatalf("status = %d, want 201 (body=%s)", w.Code, w.Body.String())
-		}
-	})
-
-	t.Run("disabled virtual matches rejected 400", func(t *testing.T) {
-		svc := &fakeMatchService{}
-		r := newVirtualRouter(newScopeVerifier(), svc, false)
-
-		w := doVirtual(t, r, "tok-report", validVirtualBody)
-		if w.Code != http.StatusBadRequest {
-			t.Fatalf("status = %d, want 400 (body=%s)", w.Code, w.Body.String())
-		}
-		if code := assertEnvelope(t, w); code != "mca_invalid_request" {
-			t.Fatalf("code = %q, want mca_invalid_request", code)
-		}
-		if svc.reportCalls != 0 {
-			t.Errorf("ReportVirtual must not be called when disabled, got %d calls", svc.reportCalls)
-		}
-	})
-
-	t.Run("malformed payload is rejected 400", func(t *testing.T) {
-		svc := &fakeMatchService{}
-		r := newVirtualRouter(newScopeVerifier(), svc, true)
-
-		w := doVirtual(t, r, "tok-report", `{"match_type": ""}`)
-		if w.Code != http.StatusBadRequest {
-			t.Fatalf("status = %d, want 400 (body=%s)", w.Code, w.Body.String())
-		}
-		if code := assertEnvelope(t, w); code != "mca_invalid_request" {
-			t.Fatalf("code = %q, want mca_invalid_request", code)
-		}
-	})
-}
-
 // fakeMatchmakingService 记录匹配调用，避免依赖数据库。
 type fakeMatchmakingService struct {
-	joinCalls  int
-	leaveCalls int
-	lastUID    int64
-	lastType   string
-	joinErr    error
-	leaveErr   error
+	joinCalls    int
+	leaveCalls   int
+	lastUID      int64
+	lastType     string
+	lastMembers  []string
+	joinErr      error
+	leaveErr     error
 }
 
-func (f *fakeMatchmakingService) Join(_ context.Context, uid int64, matchType string) (*service.QueueEntry, error) {
+func (f *fakeMatchmakingService) Join(_ context.Context, uid int64, matchType string, partyMembers []string) ([]*service.QueueEntry, error) {
 	f.joinCalls++
 	f.lastUID = uid
 	f.lastType = matchType
+	f.lastMembers = partyMembers
 	if f.joinErr != nil {
 		return nil, f.joinErr
 	}
-	return &service.QueueEntry{UID: uid, MatchType: matchType, RankScore: 1500}, nil
+	if len(partyMembers) > 0 {
+		entries := make([]*service.QueueEntry, 0, len(partyMembers))
+		for i := range partyMembers {
+			entries = append(entries, &service.QueueEntry{
+				UID: int64(100 + i), MatchType: matchType, RankScore: 1500, PartyID: 5,
+			})
+		}
+		return entries, nil
+	}
+	return []*service.QueueEntry{{UID: uid, MatchType: matchType, RankScore: 1500}}, nil
 }
 
 func (f *fakeMatchmakingService) Leave(_ context.Context, uid int64) error {
@@ -150,6 +56,10 @@ func (f *fakeMatchmakingService) Leave(_ context.Context, uid int64) error {
 func (f *fakeMatchmakingService) Status(_ context.Context, uid int64) (*service.MatchmakingStatus, error) {
 	f.lastUID = uid
 	return &service.MatchmakingStatus{InQueue: false, RecentGroups: []service.FormedGroup{}}, nil
+}
+
+func (f *fakeMatchmakingService) QueueDepth(context.Context) (map[string]int64, error) {
+	return map[string]int64{}, nil
 }
 
 // newMatchmakingRouter 装配带鉴权中间件的匹配路由。
@@ -189,8 +99,31 @@ func TestMatchmakingEndpoints(t *testing.T) {
 		if w.Code != http.StatusCreated {
 			t.Fatalf("status = %d, want 201 (body=%s)", w.Code, w.Body.String())
 		}
-		if svc.joinCalls != 1 || svc.lastUID != 7 || svc.lastType != "1v1" {
+		if svc.joinCalls != 1 || svc.lastUID != 7 || svc.lastType != "1v1" || len(svc.lastMembers) != 0 {
 			t.Errorf("unexpected join call: %+v", svc)
+		}
+	})
+
+	t.Run("join with party_members forwards member list", func(t *testing.T) {
+		svc := &fakeMatchmakingService{}
+		r := newMatchmakingRouter(verifier, svc)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/matchmaking/join",
+			strings.NewReader(`{"match_type": "2v2", "party_members": ["uuid-a", "uuid-b"]}`))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer tok-user")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		if w.Code != http.StatusCreated {
+			t.Fatalf("status = %d, want 201 (body=%s)", w.Code, w.Body.String())
+		}
+		if len(svc.lastMembers) != 2 || svc.lastMembers[0] != "uuid-a" || svc.lastMembers[1] != "uuid-b" {
+			t.Errorf("party_members = %v, want [uuid-a uuid-b]", svc.lastMembers)
+		}
+		// 队伍入队返回整队条目（数组）。
+		if !strings.Contains(w.Body.String(), `"party_id":5`) {
+			t.Errorf("party join must return all member entries, body=%s", w.Body.String())
 		}
 	})
 

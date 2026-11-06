@@ -48,9 +48,6 @@ func TestLoad_CreatesDefaultConfigWhenMissing(t *testing.T) {
 	if cfg.Auth.HRPAuth.BaseURL != "http://localhost:2778" {
 		t.Errorf("HRPAuth BaseURL 不匹配: 期望 http://localhost:2778, 实际 %s", cfg.Auth.HRPAuth.BaseURL)
 	}
-	if !cfg.VirtualMatches.Enabled {
-		t.Error("默认配置应启用虚拟对局")
-	}
 	if !cfg.Matchmaking.Enabled {
 		t.Error("默认配置应启用匹配系统")
 	}
@@ -129,7 +126,7 @@ auth:
 }
 
 // TestLoad_Migrates150To160 覆盖 1.5.0 → 1.6.0 迁移：旧配置无
-// virtual_matches / matchmaking 块时自动补齐默认值，不报错。
+// matchmaking 块时自动补齐默认值，不报错。
 func TestLoad_Migrates150To160(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "config.yaml")
@@ -160,17 +157,66 @@ auth:
 	if err != nil {
 		t.Fatalf("1.5.0 配置应能迁移加载: %v", err)
 	}
-	if cfg.Version != "1.6.0" {
-		t.Errorf("版本号不匹配: 期望 1.6.0, 实际 %s", cfg.Version)
-	}
-	if !cfg.VirtualMatches.Enabled {
-		t.Error("迁移应默认启用虚拟对局")
+	if cfg.Version != CurrentVersion {
+		t.Errorf("版本号不匹配: 期望 %s, 实际 %s", CurrentVersion, cfg.Version)
 	}
 	if cfg.Matchmaking.QueueTimeoutSeconds != 300 {
 		t.Errorf("排队超时默认值不匹配: 期望 300, 实际 %d", cfg.Matchmaking.QueueTimeoutSeconds)
 	}
 	if len(cfg.Matchmaking.Modes) != 2 {
 		t.Errorf("默认模式数不匹配: 期望 2, 实际 %d", len(cfg.Matchmaking.Modes))
+	}
+}
+
+// TestLoad_Migrates160To170 覆盖 1.6.0 → 1.7.0 迁移：
+// 移除虚拟对局独立开关（对局上报收敛为单一入口）。
+func TestLoad_Migrates160To170(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+
+	configContent := `version: "1.6.0"
+server:
+  host: "127.0.0.1"
+  port: 9178
+database:
+  host: "localhost"
+  port: 3306
+  user: "u"
+  password: "p"
+  name: "d"
+redis:
+  host: "localhost"
+  port: 6379
+auth:
+  hrpauth:
+    base_url: "http://localhost:2778"
+  maintenance_token: "t"
+virtual_matches:
+  enabled: true
+matchmaking:
+  enabled: true
+  tick_seconds: 1
+  queue_timeout_seconds: 300
+  base_rating_window: 200
+  rating_window_growth_per_minute: 100
+  max_rating_window: 1000
+  modes:
+    - match_type: "1v1"
+      team_sizes: [1, 1]
+`
+	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+		t.Fatalf("写入测试配置文件失败: %v", err)
+	}
+
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("1.6.0 配置应能迁移加载: %v", err)
+	}
+	if cfg.Version != "1.7.0" {
+		t.Errorf("版本号不匹配: 期望 1.7.0, 实际 %s", cfg.Version)
+	}
+	if !cfg.Matchmaking.Enabled {
+		t.Error("迁移后匹配系统应保持启用")
 	}
 }
 

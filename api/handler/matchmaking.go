@@ -22,9 +22,13 @@ func NewMatchmakingHandler(svc service.MatchmakingService) *MatchmakingHandler {
 // joinInput POST /api/matchmaking/join 请求体。
 type joinInput struct {
 	MatchType string `json:"match_type" binding:"required"`
+	// PartyMembers 可选成员 UUID 列表（与运维台字段同名同义）；
+	// 非空时以队为单位整体入队。
+	PartyMembers []string `json:"party_members"`
 }
 
 // Join POST /api/matchmaking/join
+// 返回本次入队的全部队列条目（单人 1 条，队伍整队多条）。
 func (h *MatchmakingHandler) Join(c *gin.Context) {
 	uid := middleware.GetUID(c)
 
@@ -34,12 +38,12 @@ func (h *MatchmakingHandler) Join(c *gin.Context) {
 		return
 	}
 
-	entry, err := h.svc.Join(c.Request.Context(), uid, body.MatchType)
+	entries, err := h.svc.Join(c.Request.Context(), uid, body.MatchType, body.PartyMembers)
 	if err != nil {
 		response.Fail(c, "加入匹配队列失败", err)
 		return
 	}
-	response.Created(c, "已加入匹配队列", entry)
+	response.Created(c, "已加入匹配队列", entries)
 }
 
 // Leave DELETE /api/matchmaking/leave
