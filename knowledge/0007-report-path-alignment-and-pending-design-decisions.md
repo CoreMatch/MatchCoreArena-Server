@@ -40,22 +40,32 @@ decision. This entry records the current alignment and the open items.
    keep their defaults). Kept for now because they have defaults and exist
    in production databases; their intended semantics need a decision.
 5. **Season hardcoded to 1** in `updateRanking` calls
-   (`internal/service/match.go`); season handling is not designed yet.
+   (`internal/service/match.go`); season handling (windows, snapshots,
+   per-season boards) is explicitly deferred by the author — no season code
+   or tables exist by design until then.
 6. **`perf_tweak` is hardcoded to 1.0 by the reporter** (BedwarsRel-MCA), so
    the individual performance weight currently has no effect end-to-end.
 7. **No README** in this repository; documentation lives in `knowledge/` and
    `bwrel.md` investigation notes only.
-8. **Virtual matches count toward real ratings and rankings**: the virtual
-   entry point (0009) writes the same `users`/`rankings` tables as game
-   reports; matches are only distinguishable via `matches.source`. Whether
-   virtual results should be segmented, filtered from leaderboards, or kept
-   as-is needs a decision. Related: who may hold `match:report` tokens for
-   virtual injection, and whether ordinary logged-in users should ever be
-   able to submit virtual matches.
+8. **Ops-injected matches count toward real ratings and rankings**: reports
+   marked `source=virtual` (ops/debug data) settle the same
+   `users`/`rankings` tables as game reports by design — the server makes no
+   virtual/game distinction (0009). Whether source-marked results should be
+   segmented or filtered from leaderboards remains open. Reporting itself is
+   restricted to OPS credentials (0002), settling the "who may inject"
+   question.
 9. **Matchmaking parameters are placeholders**: window size/growth, queue
    timeout and tick interval (0009) are conservative defaults, not tuned;
    whether matchmaking should interact with any live game-provisioning flow
    is not designed.
+10. **Party roster consent**: `party_members` join (0012) queues the listed
+    users without member-side consent; acceptable for the current ops-panel
+    caller, but production may need confirmation or an opt-out.
+11. **Duration equality strictness**: a positive `duration_seconds` must
+    exactly equal `finished_at - started_at` (0011, parity with the ops
+    panel). If real game reporters ever send a measured duration that
+    legitimately differs from the timestamp span, this rule would reject
+    those reports; whether to relax it is open.
 
 ## Consequences
 - Fresh databases stay column-compatible with existing production databases;
