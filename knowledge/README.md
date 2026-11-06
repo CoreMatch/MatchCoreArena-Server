@@ -24,6 +24,7 @@ with HA-Contract, fix the entry, not the contract.
 | [0011](0011-match-report-idempotency-and-typed-rejection.md) | Match Reports Are Idempotent by game_id and Self-Contradictions Are Rejected Typed | Accepted | `game_id` is the reporter-supplied idempotency key (identical re-reports replay with 200, conflicting reuse answers 409 `mca_game_id_conflict`), and self-contradictory payloads are rejected before settlement with 400 `mca_report_inconsistent`. |
 | [0012](0012-party-matchmaking-via-roster-and-shared-settlement.md) | Party Matchmaking via party_members Roster and Shared Settlement | Accepted | Join accepts a `party_members` UUID roster (ops-panel field name) that enqueues as one ephemeral party unit, never split across teams, with same-party rating deltas averaged when the match is reported against the formed group. |
 | [0013](0013-observability-metrics-registry.md) | Observability Is an In-Process Counter Registry Exposed at /api/metrics | Accepted | A dependency-free counter registry tracks settlements, rejection reasons and queue activity; `GET /api/metrics` (OPS-only) exposes the snapshot plus live queue depth per mode. |
+| [0014](0014-ops-query-surface-matches-rejections.md) | OPS Query Surface: Global Match List, game_id Lookup and Rejection Feed | Accepted | OPS-only reads for the debug console: `GET /api/matches` (filters + pagination, detail-shaped entries), `GET /api/matches/by-game-id/{game_id}`, and a bounded sanitized feed of recent inconsistent/conflicting reports. |
 
 ## Maintenance
 
