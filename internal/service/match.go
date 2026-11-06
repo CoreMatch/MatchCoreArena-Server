@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	gomysql "github.com/go-sql-driver/mysql"
@@ -17,6 +18,7 @@ import (
 	"MatchCoreArena-Server/internal/apperr"
 	"MatchCoreArena-Server/internal/auth"
 	"MatchCoreArena-Server/internal/rating"
+	"MatchCoreArena-Server/internal/reportlog"
 )
 
 // 对局来源标记（matches.source）。
@@ -117,6 +119,18 @@ type Page struct {
 	PageSize int `json:"page_size" form:"page_size"`
 }
 
+// MatchFilter 全局对局查询过滤条件（OPS 查询用）。
+// 空值字段不参与过滤；FinishedFrom/FinishedTo 作用于 finished_at，
+// 接受 RFC3339 或 "2006-01-02 15:04:05"（UTC）。
+type MatchFilter struct {
+	Source       string `form:"source"`
+	MapName      string `form:"map_name"`
+	GameID       string `form:"game_id"`
+	UID          int64  `form:"uid"`
+	FinishedFrom string `form:"finished_from"`
+	FinishedTo   string `form:"finished_to"`
+}
+
 // MatchService 对战业务接口。
 type MatchService interface {
 	// Report 上报对局结果并完成定级结算。
@@ -125,8 +139,14 @@ type MatchService interface {
 	Report(ctx context.Context, reporterUID int64, in TeamReportInput) (*Match, bool, error)
 	// GetByID 获取对战详情（含参与者明细）。
 	GetByID(ctx context.Context, id int64) (*Match, error)
+	// GetByGameID 按 game_id 查询对局（OPS 排查幂等重放/冲突用）；
+	// 不存在时返回 mca_match_not_found。
+	GetByGameID(ctx context.Context, gameID string) (*Match, error)
 	// ListByUser 列出用户参与的对战历史（分页）。
 	ListByUser(ctx context.Context, uid int64, page Page) ([]*Match, error)
+	// List 按过滤条件全局查询对局（OPS），按 finished_at 倒序，
+	// 含参与者明细（与单局详情同形状）。
+	List(ctx context.Context, filter MatchFilter, page Page) ([]*Match, error)
 }
 
 // matchService 数据库实现。
@@ -172,24 +192,26 @@ func normalizeTeams(in TeamReportInput) ([]TeamInfo, error) {
 	return teams, nil
 }
 
-// parseReportTimes 解析时间字段：接受 RFC3339 或 "2006-01-02 15:04:05"
-//（按 UTC 处理），并校验结束不早于开始。
-func parseReportTimes(started, finished string) (time.Time, time.Time, error) {
-	parse := func(v, field string) (time.Time, error) {
-		if t, err := time.Parse(time.RFC3339, v); err == nil {
-			return t.UTC(), nil
-		}
-		if t, err := time.ParseInLocation("2006-01-02 15:04:05", v, time.UTC); err == nil {
-			return t, nil
-		}
-		return time.Time{}, apperr.New(apperr.CodeMCAInvalidRequest,
-			fmt.Sprintf("%s 必须为 RFC3339 或 'YYYY-MM-DD HH:MM:SS' 格式", field))
+// parseTimeValue 解析单个时间字段：接受 RFC3339 或
+// "2006-01-02 15:04:05"（按 UTC 处理）。
+func parseTimeValue(v, field string) (time.Time, error) {
+	if t, err := time.Parse(time.RFC3339, v); err == nil {
+		return t.UTC(), nil
 	}
-	startedAt, err := parse(started, "started_at")
+	if t, err := time.ParseInLocation("2006-01-02 15:04:05", v, time.UTC); err == nil {
+		return t, nil
+	}
+	return time.Time{}, apperr.New(apperr.CodeMCAInvalidRequest,
+		fmt.Sprintf("%s 必须为 RFC3339 或 'YYYY-MM-DD HH:MM:SS' 格式", field))
+}
+
+// parseReportTimes 解析时间字段并校验结束不早于开始。
+func parseReportTimes(started, finished string) (time.Time, time.Time, error) {
+	startedAt, err := parseTimeValue(started, "started_at")
 	if err != nil {
 		return time.Time{}, time.Time{}, err
 	}
-	finishedAt, err := parse(finished, "finished_at")
+	finishedAt, err := parseTimeValue(finished, "finished_at")
 	if err != nil {
 		return time.Time{}, time.Time{}, err
 	}
@@ -341,7 +363,17 @@ type participantSettle struct {
 //
 // 幂等：提供 game_id 时，同一 game_id 且载荷哈希一致的重复上报返回既有
 // 记录（不再结算）；载荷不一致以 409 mca_game_id_conflict 拒绝。
-func (s *matchService) Report(ctx context.Context, reporterUID int64, in TeamReportInput) (*Match, bool, error) {
+func (s *matchService) Report(ctx context.Context, reporterUID int64, in TeamReportInput) (match *Match, replayed bool, err error) {
+	// 拒绝/冲突可观测：两类调试关注的拒绝进入有界内存环（脱敏后），
+	// 供 GET /api/matches/rejections 只读暴露。
+	defer func() {
+		var ae *apperr.Error
+		if errors.As(err, &ae) &&
+			(ae.Code == apperr.CodeMCAReportInconsistent || ae.Code == apperr.CodeMCAGameIDConflict) {
+			reportlog.Default.Record(ae.Code, in.GameID, ae.Message)
+		}
+	}()
+
 	teams, err := normalizeTeams(in)
 	if err != nil {
 		return nil, false, err
@@ -877,17 +909,27 @@ func (s *matchService) GetByID(ctx context.Context, id int64) (*Match, error) {
 	m.GameID = gameID.String
 	m.WinnerTeamID = winnerTeamID.String
 
+	participants, err := s.loadParticipants(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	m.Participants = participants
+	return &m, nil
+}
+
+// loadParticipants 读取指定对局的参与者明细（含评分变动）。
+func (s *matchService) loadParticipants(ctx context.Context, matchID int64) ([]*ParticipantDetail, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT user_uid, team_id, is_winner, is_draw, rank_score_before, rank_score_delta, survival_time_seconds, kills, deaths
 		 FROM match_participants WHERE match_id = ? ORDER BY id`,
-		id,
+		matchID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("查询对战参与者失败: %w", err)
 	}
 	defer rows.Close()
 
-	m.Participants = []*ParticipantDetail{}
+	participants := []*ParticipantDetail{}
 	for rows.Next() {
 		var p ParticipantDetail
 		if err := rows.Scan(&p.UID, &p.TeamID, &p.IsWinner, &p.IsDraw, &p.RankScoreBefore, &p.RankScoreDelta, &p.SurvivalTime, &p.Kills, &p.Deaths); err != nil {
@@ -897,9 +939,9 @@ func (s *matchService) GetByID(ctx context.Context, id int64) (*Match, error) {
 		if p.RankScoreAfter < 0 {
 			p.RankScoreAfter = 0
 		}
-		m.Participants = append(m.Participants, &p)
+		participants = append(participants, &p)
 	}
-	return &m, nil
+	return participants, rows.Err()
 }
 
 // ListByUser 列出用户参与的对战历史（分页）。
@@ -930,6 +972,105 @@ func (s *matchService) ListByUser(ctx context.Context, uid int64, page Page) ([]
 		m.GameID = gameID.String
 		m.WinnerTeamID = winnerTeamID.String
 		matches = append(matches, &m)
+	}
+	return matches, nil
+}
+
+// GetByGameID 按 game_id 查询对局（OPS 排查幂等重放/冲突用）。
+func (s *matchService) GetByGameID(ctx context.Context, gameID string) (*Match, error) {
+	if gameID == "" {
+		return nil, apperr.New(apperr.CodeMCAInvalidRequest, "game_id 不能为空")
+	}
+	m, _, found, err := s.findByGameID(ctx, gameID)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, apperr.New(apperr.CodeMCAMatchNotFound,
+			fmt.Sprintf("对战记录 (game_id: %s) 不存在", gameID))
+	}
+	return m, nil
+}
+
+// List 按过滤条件全局查询对局（OPS 查询用）：source/map_name/game_id
+// 精确匹配、uid 按参与者过滤、finished_from/finished_to 作用于
+// finished_at 区间；按 finished_at 倒序（其次 id 倒序），含参与者明细。
+func (s *matchService) List(ctx context.Context, filter MatchFilter, page Page) ([]*Match, error) {
+	where := []string{}
+	args := []any{}
+	if filter.Source != "" {
+		where = append(where, "m.source = ?")
+		args = append(args, filter.Source)
+	}
+	if filter.MapName != "" {
+		where = append(where, "m.map_name = ?")
+		args = append(args, filter.MapName)
+	}
+	if filter.GameID != "" {
+		where = append(where, "m.game_id = ?")
+		args = append(args, filter.GameID)
+	}
+	if filter.UID != 0 {
+		where = append(where,
+			"EXISTS (SELECT 1 FROM match_participants mp WHERE mp.match_id = m.id AND mp.user_uid = ?)")
+		args = append(args, filter.UID)
+	}
+	if filter.FinishedFrom != "" {
+		t, err := parseTimeValue(filter.FinishedFrom, "finished_from")
+		if err != nil {
+			return nil, err
+		}
+		where = append(where, "m.finished_at >= ?")
+		args = append(args, t)
+	}
+	if filter.FinishedTo != "" {
+		t, err := parseTimeValue(filter.FinishedTo, "finished_to")
+		if err != nil {
+			return nil, err
+		}
+		where = append(where, "m.finished_at <= ?")
+		args = append(args, t)
+	}
+
+	query := `SELECT m.id, m.match_type, m.source, m.map_name, m.server_id, m.game_id, m.winner_team_id, m.survival_rate, m.duration_seconds, m.started_at, m.finished_at, m.created_at
+		 FROM matches m`
+	if len(where) > 0 {
+		query += " WHERE " + strings.Join(where, " AND ")
+	}
+	query += " ORDER BY m.finished_at DESC, m.id DESC LIMIT ? OFFSET ?"
+	offset := (page.PageNum - 1) * page.PageSize
+	args = append(args, page.PageSize, offset)
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("查询对战列表失败: %w", err)
+	}
+	defer rows.Close()
+
+	matches := []*Match{}
+	for rows.Next() {
+		var m Match
+		var mapName, serverID, gameID, winnerTeamID sql.NullString
+		if err := rows.Scan(&m.ID, &m.MatchType, &m.Source, &mapName, &serverID, &gameID, &winnerTeamID, &m.SurvivalRate, &m.DurationSeconds, &m.StartedAt, &m.FinishedAt, &m.CreatedAt); err != nil {
+			return nil, fmt.Errorf("解析对战记录失败: %w", err)
+		}
+		m.MapName = mapName.String
+		m.ServerID = serverID.String
+		m.GameID = gameID.String
+		m.WinnerTeamID = winnerTeamID.String
+		matches = append(matches, &m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("遍历对战列表失败: %w", err)
+	}
+
+	// 与单局详情同形状：逐局加载参与者明细（OPS 调试页，页长有界）。
+	for _, m := range matches {
+		participants, err := s.loadParticipants(ctx, m.ID)
+		if err != nil {
+			return nil, err
+		}
+		m.Participants = participants
 	}
 	return matches, nil
 }

@@ -88,6 +88,9 @@ func Register(r *gin.Engine, db *sql.DB, oauthClient *auth.Client, ver auth.Veri
 
 		// matches（唯一上报入口，仅 OPS 级凭据）
 		api.POST("/matches", matchH.Report)
+		api.GET("/matches", matchH.List)
+		api.GET("/matches/by-game-id/:game_id", matchH.GetByGameID)
+		api.GET("/matches/rejections", matchH.Rejections)
 		api.GET("/matches/:id", matchH.GetByID)
 		api.GET("/matches/me", matchH.ListByMe)
 
