@@ -11,9 +11,11 @@ import (
 	"time"
 
 	gomysql "github.com/go-sql-driver/mysql"
+	goredis "github.com/redis/go-redis/v9"
 
 	"MatchCoreArena-Server/config"
 	"MatchCoreArena-Server/internal/apperr"
+	"MatchCoreArena-Server/internal/auth"
 	"MatchCoreArena-Server/internal/metrics"
 )
 
@@ -49,50 +51,32 @@ type MatchmakingStatus struct {
 	RecentGroups []FormedGroup `json:"recent_groups"`
 }
 
-// PartyMember 队伍（组队）成员。
-type PartyMember struct {
-	UID       int64  `json:"uid"`
-	RankScore int    `json:"rank_score"`
-	JoinedAt  string `json:"joined_at"`
-}
-
-// Party 匹配队伍：以队为单位入队与匹配。
-type Party struct {
-	ID        int64         `json:"id"`
-	LeaderUID int64         `json:"leader_uid"`
-	MatchType string        `json:"match_type"`
-	CreatedAt string        `json:"created_at"`
-	Members   []PartyMember `json:"members"`
-}
-
 // MatchmakingService 匹配业务接口。
 type MatchmakingService interface {
-	// Join 加入匹配队列；partyID>0 时以队伍为单位整体入队（仅队长可发起）。
-	Join(ctx context.Context, uid int64, matchType string, partyID int64) ([]*QueueEntry, error)
-	// Leave 离开匹配队列；以队伍入队时整队移出。
+	// Join 加入匹配队列。partyMembers 为成员 UUID 列表（与运维台字段
+	// 同名同义）：非空时解析为 uid、建立临时队伍并整队入队；为空时
+	// 单人入队（调用者不得已在队伍中）。
+	Join(ctx context.Context, uid int64, matchType string, partyMembers []string) ([]*QueueEntry, error)
+	// Leave 离开匹配队列；以队伍入队时整队移出并清理临时队伍。
 	Leave(ctx context.Context, uid int64) error
 	// Status 查询用户排队状态与本人相关的近期成局记录。
 	Status(ctx context.Context, uid int64) (*MatchmakingStatus, error)
-	// CreateParty 创建队伍（发起者为队长）。
-	CreateParty(ctx context.Context, uid int64, matchType string) (*Party, error)
-	// JoinParty 加入队伍。
-	JoinParty(ctx context.Context, uid int64, partyID int64) (*Party, error)
-	// LeaveParty 离开队伍；队长离开即解散。
-	LeaveParty(ctx context.Context, uid int64, partyID int64) error
-	// GetParty 查询队伍信息。
-	GetParty(ctx context.Context, partyID int64) (*Party, error)
 	// QueueDepth 按模式统计队列深度（可观测性用）。
 	QueueDepth(ctx context.Context) (map[string]int64, error)
 }
 
 type matchmakingService struct {
-	db  *sql.DB
-	cfg config.MatchmakingConfig
+	db         *sql.DB
+	cfg        config.MatchmakingConfig
+	authClient *auth.Client
+	redis      *goredis.Client
 }
 
 // NewMatchmakingService 创建 MatchmakingService 实例。
-func NewMatchmakingService(db *sql.DB, cfg config.MatchmakingConfig) MatchmakingService {
-	return &matchmakingService{db: db, cfg: cfg}
+// authClient/redis 用于组队入队时的 UUID→uid 解析（与对局上报同一
+// 信任边界：uid 只来自 HRPAuth 解析结果）。
+func NewMatchmakingService(db *sql.DB, cfg config.MatchmakingConfig, authClient *auth.Client, redis *goredis.Client) MatchmakingService {
+	return &matchmakingService{db: db, cfg: cfg, authClient: authClient, redis: redis}
 }
 
 // maxTeamSize 返回模式的最大队伍人数。
@@ -106,167 +90,13 @@ func maxTeamSize(mode config.MatchMode) int {
 	return maxSize
 }
 
-// CreateParty 创建队伍。每个用户同时至多属于一个队伍。
-func (s *matchmakingService) CreateParty(ctx context.Context, uid int64, matchType string) (*Party, error) {
-	if !s.cfg.Enabled {
-		return nil, apperr.New(apperr.CodeMCAInvalidRequest, "匹配系统未启用")
-	}
-	if _, ok := s.cfg.FindMode(matchType); !ok {
-		return nil, apperr.New(apperr.CodeMCAInvalidRequest,
-			fmt.Sprintf("未知匹配模式: %s", matchType))
-	}
-	if in, _, err := s.partyOf(ctx, uid); err != nil {
-		return nil, err
-	} else if in {
-		return nil, apperr.New(apperr.CodeMCAPartyAlreadyInParty, "已在队伍中")
-	}
-
-	res, err := s.db.ExecContext(ctx,
-		"INSERT INTO matchmaking_parties (leader_uid, match_type) VALUES (?, ?)",
-		uid, matchType,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("创建队伍失败: %w", err)
-	}
-	partyID, _ := res.LastInsertId()
-	if _, err := s.db.ExecContext(ctx,
-		"INSERT INTO matchmaking_party_members (party_id, user_uid) VALUES (?, ?)",
-		partyID, uid,
-	); err != nil {
-		return nil, fmt.Errorf("创建队伍成员失败: %w", err)
-	}
-	metrics.Default.Inc(metrics.PartiesCreatedTotal, 1)
-	return s.GetParty(ctx, partyID)
-}
-
-// JoinParty 加入队伍；队伍人数上限为模式的最大队伍人数。
-func (s *matchmakingService) JoinParty(ctx context.Context, uid int64, partyID int64) (*Party, error) {
-	party, err := s.GetParty(ctx, partyID)
-	if err != nil {
-		return nil, err
-	}
-	if in, currentID, err := s.partyOf(ctx, uid); err != nil {
-		return nil, err
-	} else if in {
-		if currentID == partyID {
-			return nil, apperr.New(apperr.CodeMCAPartyAlreadyInParty, "已在该队伍中")
-		}
-		return nil, apperr.New(apperr.CodeMCAPartyAlreadyInParty, "已在其他队伍中")
-	}
-	mode, ok := s.cfg.FindMode(party.MatchType)
-	if !ok {
-		return nil, apperr.New(apperr.CodeMCAInvalidRequest,
-			fmt.Sprintf("未知匹配模式: %s", party.MatchType))
-	}
-	if len(party.Members) >= maxTeamSize(mode) {
-		return nil, apperr.New(apperr.CodeMCAPartyFull,
-			fmt.Sprintf("队伍已满（模式 %s 单队上限 %d 人）", party.MatchType, maxTeamSize(mode)))
-	}
-	if _, err := s.db.ExecContext(ctx,
-		"INSERT INTO matchmaking_party_members (party_id, user_uid) VALUES (?, ?)",
-		partyID, uid,
-	); err != nil {
-		var me *gomysql.MySQLError
-		if errors.As(err, &me) && me.Number == 1062 {
-			return nil, apperr.New(apperr.CodeMCAPartyAlreadyInParty, "已在队伍中")
-		}
-		return nil, fmt.Errorf("加入队伍失败: %w", err)
-	}
-	return s.GetParty(ctx, partyID)
-}
-
-// LeaveParty 离开队伍；队长离开即解散队伍。
-func (s *matchmakingService) LeaveParty(ctx context.Context, uid int64, partyID int64) error {
-	party, err := s.GetParty(ctx, partyID)
-	if err != nil {
-		return err
-	}
-	isMember := false
-	for _, m := range party.Members {
-		if m.UID == uid {
-			isMember = true
-			break
-		}
-	}
-	if !isMember {
-		return apperr.New(apperr.CodeMCAPartyNotFound, "不在该队伍中")
-	}
-	if party.LeaderUID == uid {
-		if _, err := s.db.ExecContext(ctx,
-			"DELETE FROM matchmaking_parties WHERE id = ?", partyID,
-		); err != nil {
-			return fmt.Errorf("解散队伍失败: %w", err)
-		}
-		return nil
-	}
-	if _, err := s.db.ExecContext(ctx,
-		"DELETE FROM matchmaking_party_members WHERE party_id = ? AND user_uid = ?",
-		partyID, uid,
-	); err != nil {
-		return fmt.Errorf("离开队伍失败: %w", err)
-	}
-	return nil
-}
-
-// GetParty 查询队伍信息（含成员评分快照）。
-func (s *matchmakingService) GetParty(ctx context.Context, partyID int64) (*Party, error) {
-	var party Party
-	err := s.db.QueryRowContext(ctx,
-		"SELECT id, leader_uid, match_type, created_at FROM matchmaking_parties WHERE id = ?",
-		partyID,
-	).Scan(&party.ID, &party.LeaderUID, &party.MatchType, &party.CreatedAt)
-	if err == sql.ErrNoRows {
-		return nil, apperr.New(apperr.CodeMCAPartyNotFound,
-			fmt.Sprintf("队伍 (id: %d) 不存在", partyID))
-	}
-	if err != nil {
-		return nil, fmt.Errorf("查询队伍失败: %w", err)
-	}
-
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT pm.user_uid, COALESCE(u.rank_score, 0), pm.created_at
-		 FROM matchmaking_party_members pm
-		 LEFT JOIN users u ON u.uid = pm.user_uid AND u.deleted_at IS NULL
-		 WHERE pm.party_id = ? ORDER BY pm.id`,
-		partyID,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("查询队伍成员失败: %w", err)
-	}
-	defer rows.Close()
-	party.Members = []PartyMember{}
-	for rows.Next() {
-		var m PartyMember
-		if err := rows.Scan(&m.UID, &m.RankScore, &m.JoinedAt); err != nil {
-			return nil, fmt.Errorf("解析队伍成员失败: %w", err)
-		}
-		party.Members = append(party.Members, m)
-	}
-	return &party, rows.Err()
-}
-
-// partyOf 返回用户当前所在队伍（若有）。
-func (s *matchmakingService) partyOf(ctx context.Context, uid int64) (bool, int64, error) {
-	var partyID int64
-	err := s.db.QueryRowContext(ctx,
-		"SELECT party_id FROM matchmaking_party_members WHERE user_uid = ?", uid,
-	).Scan(&partyID)
-	if err == sql.ErrNoRows {
-		return false, 0, nil
-	}
-	if err != nil {
-		return false, 0, fmt.Errorf("查询队伍归属失败: %w", err)
-	}
-	return true, partyID, nil
-}
-
 // Join 加入匹配队列。
 //
 // 单人入队：不在任何队伍中才可单独排队。
-// 队伍入队（partyID>0）：仅队长可发起，全队作为一个单位写入队列；
-// 队伍人数不得超过模式的最大队伍人数。
+// 队伍入队（partyMembers 非空）：成员 UUID 解析为 uid 后建立临时队伍，
+// 全队作为一个单位写入队列；人数须在 [2, 模式单队上限] 内。
 // 返回本次入队的全部队列条目（队伍入队时为多条）。
-func (s *matchmakingService) Join(ctx context.Context, uid int64, matchType string, partyID int64) ([]*QueueEntry, error) {
+func (s *matchmakingService) Join(ctx context.Context, uid int64, matchType string, partyMembers []string) ([]*QueueEntry, error) {
 	if !s.cfg.Enabled {
 		return nil, apperr.New(apperr.CodeMCAInvalidRequest, "匹配系统未启用")
 	}
@@ -276,8 +106,8 @@ func (s *matchmakingService) Join(ctx context.Context, uid int64, matchType stri
 			fmt.Sprintf("未知匹配模式: %s", matchType))
 	}
 
-	if partyID > 0 {
-		return s.joinAsParty(ctx, uid, mode, partyID)
+	if len(partyMembers) > 0 {
+		return s.joinAsParty(ctx, mode, partyMembers)
 	}
 
 	if in, _, err := s.partyOf(ctx, uid); err != nil {
@@ -298,25 +128,55 @@ func (s *matchmakingService) Join(ctx context.Context, uid int64, matchType stri
 	return []*QueueEntry{entry}, nil
 }
 
-// joinAsParty 以队伍为单位整体入队（事务）。
-func (s *matchmakingService) joinAsParty(ctx context.Context, uid int64, mode config.MatchMode, partyID int64) ([]*QueueEntry, error) {
-	party, err := s.GetParty(ctx, partyID)
-	if err != nil {
-		return nil, err
+// joinAsParty 以队伍为单位整体入队（事务）：解析成员 UUID、建立临时
+// 队伍、全队写入队列。临时队伍在成局或整队离队时清理。
+func (s *matchmakingService) joinAsParty(ctx context.Context, mode config.MatchMode, members []string) ([]*QueueEntry, error) {
+	if len(members) < 2 {
+		return nil, apperr.New(apperr.CodeMCAInvalidRequest, "party_members 至少需要 2 名成员")
 	}
-	if party.LeaderUID != uid {
-		return nil, apperr.New(apperr.CodeMCANotPartyLeader, "仅队长可以带领队伍排队")
-	}
-	if party.MatchType != mode.MatchType {
-		return nil, apperr.New(apperr.CodeMCAInvalidRequest,
-			fmt.Sprintf("队伍模式 %s 与排队模式 %s 不一致", party.MatchType, mode.MatchType))
-	}
-	if len(party.Members) > maxTeamSize(mode) {
+	if len(members) > maxTeamSize(mode) {
 		return nil, apperr.New(apperr.CodeMCAPartyFull,
 			fmt.Sprintf("队伍人数超出模式 %s 单队上限 %d 人", mode.MatchType, maxTeamSize(mode)))
 	}
-	if len(party.Members) == 0 {
-		return nil, apperr.New(apperr.CodeMCAPartyNotFound, "队伍为空")
+	seenUUID := make(map[string]bool, len(members))
+	for _, uuid := range members {
+		if uuid == "" {
+			return nil, apperr.New(apperr.CodeMCAInvalidRequest, "party_members 含空 UUID")
+		}
+		if seenUUID[uuid] {
+			return nil, apperr.New(apperr.CodeMCAInvalidRequest,
+				fmt.Sprintf("party_members 含重复成员: %s", uuid))
+		}
+		seenUUID[uuid] = true
+	}
+
+	uids := make([]int64, 0, len(members))
+	for _, uuid := range members {
+		memberUID, err := resolveUUID(ctx, s.authClient, s.redis, uuid)
+		if err != nil {
+			switch {
+			case errors.Is(err, auth.ErrUserNotFound):
+				return nil, apperr.New(apperr.CodeMCAUserNotFound,
+					fmt.Sprintf("队伍成员 (uuid: %s) 在 HRPAuth 中不存在", uuid))
+			case errors.Is(err, auth.ErrServiceAuth):
+				return nil, apperr.New(apperr.CodeOAuthHRPAuthDown,
+					"HRPAuth 服务凭据不可用，无法解析队伍成员身份")
+			default:
+				return nil, apperr.New(apperr.CodeOAuthHRPAuthDown,
+					fmt.Sprintf("解析队伍成员 (uuid: %s) 身份失败", uuid))
+			}
+		}
+		uids = append(uids, memberUID)
+	}
+
+	// 成员不得已在其他队伍中（队伍入队期间必然在队）。
+	for _, memberUID := range uids {
+		if in, _, err := s.partyOf(ctx, memberUID); err != nil {
+			return nil, err
+		} else if in {
+			return nil, apperr.New(apperr.CodeMCAPartyAlreadyInParty,
+				fmt.Sprintf("成员 (uid: %d) 已在其他队伍中", memberUID))
+		}
 	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -325,15 +185,35 @@ func (s *matchmakingService) joinAsParty(ctx context.Context, uid int64, mode co
 	}
 	defer tx.Rollback()
 
-	entries := make([]*QueueEntry, 0, len(party.Members))
-	for _, m := range party.Members {
-		score, err := s.getUserRankScore(ctx, m.UID)
+	// 临时队伍：leader_uid 记录名单首位（成局/离队时按 party_id 清理）。
+	res, err := tx.ExecContext(ctx,
+		"INSERT INTO matchmaking_parties (leader_uid, match_type) VALUES (?, ?)",
+		uids[0], mode.MatchType,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("创建队伍失败: %w", err)
+	}
+	partyID, _ := res.LastInsertId()
+
+	entries := make([]*QueueEntry, 0, len(uids))
+	for _, memberUID := range uids {
+		if _, err := tx.ExecContext(ctx,
+			"INSERT INTO matchmaking_party_members (party_id, user_uid) VALUES (?, ?)",
+			partyID, memberUID,
+		); err != nil {
+			var me *gomysql.MySQLError
+			if errors.As(err, &me) && me.Number == 1062 {
+				return nil, apperr.New(apperr.CodeMCAPartyAlreadyInParty, "队伍中有成员已在其他队伍中")
+			}
+			return nil, fmt.Errorf("写入队伍成员失败: %w", err)
+		}
+		score, err := s.getUserRankScore(ctx, memberUID)
 		if err != nil {
 			return nil, err
 		}
 		if _, err := tx.ExecContext(ctx,
 			"INSERT INTO matchmaking_queue (user_uid, match_type, rank_score, party_id) VALUES (?, ?, ?, ?)",
-			m.UID, mode.MatchType, score, partyID,
+			memberUID, mode.MatchType, score, partyID,
 		); err != nil {
 			var me *gomysql.MySQLError
 			if errors.As(err, &me) && me.Number == 1062 {
@@ -341,12 +221,13 @@ func (s *matchmakingService) joinAsParty(ctx context.Context, uid int64, mode co
 			}
 			return nil, fmt.Errorf("加入匹配队列失败: %w", err)
 		}
-		entries = append(entries, &QueueEntry{UID: m.UID, MatchType: mode.MatchType, RankScore: score, PartyID: partyID})
+		entries = append(entries, &QueueEntry{UID: memberUID, MatchType: mode.MatchType, RankScore: score, PartyID: partyID})
 	}
 
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("提交事务失败: %w", err)
 	}
+	metrics.Default.Inc(metrics.PartiesCreatedTotal, 1)
 	metrics.Default.Inc(metrics.MatchmakingJoinTotal, int64(len(entries)))
 	return entries, nil
 }
@@ -411,7 +292,23 @@ func (s *matchmakingService) getUserRankScore(ctx context.Context, uid int64) (i
 	return score, nil
 }
 
-// Leave 离开匹配队列；以队伍入队时整队移出。不在队列中返回 404。
+// partyOf 返回用户当前所在队伍（若有）。
+func (s *matchmakingService) partyOf(ctx context.Context, uid int64) (bool, int64, error) {
+	var partyID int64
+	err := s.db.QueryRowContext(ctx,
+		"SELECT party_id FROM matchmaking_party_members WHERE user_uid = ?", uid,
+	).Scan(&partyID)
+	if err == sql.ErrNoRows {
+		return false, 0, nil
+	}
+	if err != nil {
+		return false, 0, fmt.Errorf("查询队伍归属失败: %w", err)
+	}
+	return true, partyID, nil
+}
+
+// Leave 离开匹配队列；以队伍入队时整队移出并清理临时队伍。
+// 不在队列中返回 404。
 func (s *matchmakingService) Leave(ctx context.Context, uid int64) error {
 	var partyID sql.NullInt64
 	err := s.db.QueryRowContext(ctx,
@@ -443,6 +340,14 @@ func (s *matchmakingService) Leave(ctx context.Context, uid int64) error {
 	}
 	if n == 0 {
 		return apperr.New(apperr.CodeMCAQueueNotJoined, "未在匹配队列中")
+	}
+	if partyID.Valid {
+		// 整队离队即清理临时队伍（成员级联移除）。
+		if _, err := s.db.ExecContext(ctx,
+			"DELETE FROM matchmaking_parties WHERE id = ?", partyID.Int64,
+		); err != nil {
+			return fmt.Errorf("清理队伍失败: %w", err)
+		}
 	}
 	metrics.Default.Inc(metrics.MatchmakingLeaveTotal, n)
 	return nil
@@ -520,7 +425,7 @@ func (s *matchmakingService) groupMembers(ctx context.Context, groupID int64) ([
 		}
 		members = append(members, m)
 	}
-	return members, nil
+	return members, rows.Err()
 }
 
 // QueueDepth 按模式统计队列深度。
@@ -625,10 +530,10 @@ type queueRow struct {
 
 // matchUnit 匹配单位：单人或整队。
 type matchUnit struct {
-	rows      []queueRow
-	rating    int // 单人=个人分；队伍=成员平均分
-	waited    int64
-	partyID   int64
+	rows    []queueRow
+	rating  int // 单人=个人分；队伍=成员平均分
+	waited  int64
+	partyID int64
 }
 
 // formGroups 对单个模式反复成局，直到剩余队列无法凑满一局。

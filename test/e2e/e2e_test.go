@@ -712,66 +712,47 @@ func TestMatchCoreE2E(t *testing.T) {
 		}
 	})
 
-	// 组队匹配：建队 → 加入 → 以队入队 → 成局（同队同 party 不拆分）→
-	// 成局后 party 清理 → 队伍共享结算。
+	// 组队匹配：join 携带 party_members（成员 UUID 列表，与运维台同名字段）
+	// → 整队入队 → 成局（同队同 party 不拆分）→ 队伍共享结算 → 清理后可重组队。
 	t.Run("party matchmaking end to end", func(t *testing.T) {
-		// 建队：107 带领 108；109 带领 110。
-		status, envelope := doJSON(t, env, http.MethodPost, "/api/matchmaking/party", userToken(107), map[string]any{"match_type": "2v2"})
+		// 非法输入：未知成员 → 404；2v2 超员 → 409。
+		status, envelope := doJSON(t, env, http.MethodPost, "/api/matchmaking/join", userToken(107),
+			map[string]any{"match_type": "2v2", "party_members": []string{"e2e-uuid-7", "e2e-uuid-unknown"}})
+		if status != http.StatusNotFound || envelope["code"] != "mca_user_not_found" {
+			t.Fatalf("未知成员 status/code = %d/%v, want 404/mca_user_not_found", status, envelope["code"])
+		}
+		status, envelope = doJSON(t, env, http.MethodPost, "/api/matchmaking/join", userToken(107),
+			map[string]any{"match_type": "2v2", "party_members": []string{"e2e-uuid-5", "e2e-uuid-6", "e2e-uuid-3"}})
+		if status != http.StatusConflict || envelope["code"] != "mca_party_full" {
+			t.Fatalf("超员组队 status/code = %d/%v, want 409/mca_party_full", status, envelope["code"])
+		}
+
+		// 两队整队入队（107+108 对 109+110）。
+		status, envelope = doJSON(t, env, http.MethodPost, "/api/matchmaking/join", userToken(107),
+			map[string]any{"match_type": "2v2", "party_members": []string{"e2e-uuid-7", "e2e-uuid-8"}})
 		if status != http.StatusCreated {
-			t.Fatalf("create party status = %d, want 201 (body=%v)", status, envelope)
+			t.Fatalf("party1 入队 status = %d, want 201 (body=%v)", status, envelope)
 		}
-		party1 := jsonInt(t, dataMap(t, envelope), "id")
-		status, envelope = doJSON(t, env, http.MethodPost, fmt.Sprintf("/api/matchmaking/party/%d/join", party1), userToken(108), nil)
-		if status != http.StatusOK {
-			t.Fatalf("join party status = %d, want 200 (body=%v)", status, envelope)
+		entries := dataArray(t, envelope)
+		if len(entries) != 2 {
+			t.Fatalf("party1 入队条目 = %d, want 2（整队）", len(entries))
 		}
-		if members, _ := dataMap(t, envelope)["members"].([]any); len(members) != 2 {
-			t.Fatalf("party1 members = %v, want 2", dataMap(t, envelope)["members"])
-		}
-
-		status, envelope = doJSON(t, env, http.MethodPost, "/api/matchmaking/party", userToken(109), map[string]any{"match_type": "2v2"})
+		party1 := jsonInt(t, entries[0].(map[string]any), "party_id")
+		status, envelope = doJSON(t, env, http.MethodPost, "/api/matchmaking/join", userToken(109),
+			map[string]any{"match_type": "2v2", "party_members": []string{"e2e-uuid-9", "e2e-uuid-10"}})
 		if status != http.StatusCreated {
-			t.Fatalf("create party2 status = %d, want 201 (body=%v)", status, envelope)
+			t.Fatalf("party2 入队 status = %d, want 201 (body=%v)", status, envelope)
 		}
-		party2 := jsonInt(t, dataMap(t, envelope), "id")
-		status, _ = doJSON(t, env, http.MethodPost, fmt.Sprintf("/api/matchmaking/party/%d/join", party2), userToken(110), nil)
-		if status != http.StatusOK {
-			t.Fatalf("join party2 status = %d, want 200", status)
-		}
-
-		// 已在队伍中不能再建队。
-		status, envelope = doJSON(t, env, http.MethodPost, "/api/matchmaking/party", userToken(108), map[string]any{"match_type": "2v2"})
-		if status != http.StatusConflict || envelope["code"] != "mca_party_already_in_party" {
-			t.Fatalf("重复建队 status/code = %d/%v, want 409/mca_party_already_in_party", status, envelope["code"])
+		party2 := jsonInt(t, dataArray(t, envelope)[0].(map[string]any), "party_id")
+		if party1 == party2 {
+			t.Fatalf("两队 party_id 相同: %d", party1)
 		}
 
-		// 非队长不能带领队伍排队。
-		status, envelope = doJSON(t, env, http.MethodPost, "/api/matchmaking/join", userToken(108),
-			map[string]any{"match_type": "2v2", "party_id": party1})
-		if status != http.StatusForbidden || envelope["code"] != "mca_not_party_leader" {
-			t.Fatalf("非队长带队 status/code = %d/%v, want 403/mca_not_party_leader", status, envelope["code"])
-		}
-
-		// 在队伍中的用户不能单人排队。
+		// 已在队伍（排队中）的用户不能单人排队。
 		status, envelope = doJSON(t, env, http.MethodPost, "/api/matchmaking/join", userToken(110),
 			map[string]any{"match_type": "2v2"})
 		if status != http.StatusConflict || envelope["code"] != "mca_party_already_in_party" {
 			t.Fatalf("队员单人排队 status/code = %d/%v, want 409/mca_party_already_in_party", status, envelope["code"])
-		}
-
-		// 两位队长依次带整队入队。
-		status, envelope = doJSON(t, env, http.MethodPost, "/api/matchmaking/join", userToken(107),
-			map[string]any{"match_type": "2v2", "party_id": party1})
-		if status != http.StatusCreated {
-			t.Fatalf("party1 入队 status = %d, want 201 (body=%v)", status, envelope)
-		}
-		if entries := dataArray(t, envelope); len(entries) != 2 {
-			t.Fatalf("party1 入队条目 = %d, want 2（整队）", len(entries))
-		}
-		status, envelope = doJSON(t, env, http.MethodPost, "/api/matchmaking/join", userToken(109),
-			map[string]any{"match_type": "2v2", "party_id": party2})
-		if status != http.StatusCreated {
-			t.Fatalf("party2 入队 status = %d, want 201 (body=%v)", status, envelope)
 		}
 
 		// 轮询等待引擎成局。
@@ -818,12 +799,6 @@ func TestMatchCoreE2E(t *testing.T) {
 			t.Errorf("成局成员 party 归属错误: %v", partyOf)
 		}
 
-		// 成局后 party 被清理。
-		status, envelope = doJSON(t, env, http.MethodGet, fmt.Sprintf("/api/matchmaking/party/%d", party1), userToken(107), nil)
-		if status != http.StatusNotFound || envelope["code"] != "mca_party_not_found" {
-			t.Fatalf("成局后 party 查询 status/code = %d/%v, want 404/mca_party_not_found", status, envelope["code"])
-		}
-
 		// 队伍共享结算：关联成局上报 2v2 结果，107/108 表现微调不同
 		//（原始 delta 341/309）→ 共享平均值 325。
 		report := map[string]any{
@@ -859,6 +834,22 @@ func TestMatchCoreE2E(t *testing.T) {
 		}
 		if score := jsonInt(t, getUserProfile(t, env, 107), "rank_score"); score != 325 {
 			t.Errorf("107 rank_score = %d, want 325", score)
+		}
+
+		// 成局后临时队伍已清理：同样成员可立即重组队入队，随后任一成员
+		// 离队即整队移出。
+		status, envelope = doJSON(t, env, http.MethodPost, "/api/matchmaking/join", userToken(107),
+			map[string]any{"match_type": "2v2", "party_members": []string{"e2e-uuid-7", "e2e-uuid-8"}})
+		if status != http.StatusCreated {
+			t.Fatalf("重组队入队 status = %d, want 201（成局后队伍应已清理）(body=%v)", status, envelope)
+		}
+		status, envelope = doJSON(t, env, http.MethodDelete, "/api/matchmaking/leave", userToken(108), nil)
+		if status != http.StatusOK {
+			t.Fatalf("整队离队 status = %d, want 200 (body=%v)", status, envelope)
+		}
+		status, envelope = doJSON(t, env, http.MethodGet, "/api/matchmaking/status", userToken(107), nil)
+		if status != http.StatusOK || dataMap(t, envelope)["in_queue"] != false {
+			t.Fatalf("整队离队后 107 仍在队列: %d %v", status, envelope)
 		}
 	})
 
@@ -911,7 +902,7 @@ func TestMatchCoreE2E(t *testing.T) {
 		counterAtLeast("matches_rejected_total:mca_game_id_conflict", 1)
 		counterAtLeast("matchmaking_groups_formed_total:1v1", 1)
 		counterAtLeast("matchmaking_groups_formed_total:2v2", 1)
-		counterAtLeast("matchmaking_parties_created_total", 2)
+		counterAtLeast("matchmaking_parties_created_total", 3)
 		if _, ok := data["queue_depth"].(map[string]any); !ok {
 			t.Errorf("queue_depth 缺失或不是对象: %v", data["queue_depth"])
 		}

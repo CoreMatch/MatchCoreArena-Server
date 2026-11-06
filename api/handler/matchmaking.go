@@ -1,8 +1,6 @@
 package handler
 
 import (
-	"strconv"
-
 	"github.com/gin-gonic/gin"
 
 	"MatchCoreArena-Server/api/middleware"
@@ -24,8 +22,9 @@ func NewMatchmakingHandler(svc service.MatchmakingService) *MatchmakingHandler {
 // joinInput POST /api/matchmaking/join 请求体。
 type joinInput struct {
 	MatchType string `json:"match_type" binding:"required"`
-	// PartyID 可选；>0 时以队伍为单位整体入队（仅队长可发起）。
-	PartyID int64 `json:"party_id"`
+	// PartyMembers 可选成员 UUID 列表（与运维台字段同名同义）；
+	// 非空时以队为单位整体入队。
+	PartyMembers []string `json:"party_members"`
 }
 
 // Join POST /api/matchmaking/join
@@ -39,7 +38,7 @@ func (h *MatchmakingHandler) Join(c *gin.Context) {
 		return
 	}
 
-	entries, err := h.svc.Join(c.Request.Context(), uid, body.MatchType, body.PartyID)
+	entries, err := h.svc.Join(c.Request.Context(), uid, body.MatchType, body.PartyMembers)
 	if err != nil {
 		response.Fail(c, "加入匹配队列失败", err)
 		return
@@ -66,74 +65,4 @@ func (h *MatchmakingHandler) Status(c *gin.Context) {
 		return
 	}
 	response.OK(c, "查询匹配状态成功", st)
-}
-
-// createPartyInput POST /api/matchmaking/party 请求体。
-type createPartyInput struct {
-	MatchType string `json:"match_type" binding:"required"`
-}
-
-// CreateParty POST /api/matchmaking/party
-func (h *MatchmakingHandler) CreateParty(c *gin.Context) {
-	uid := middleware.GetUID(c)
-
-	var body createPartyInput
-	if err := c.ShouldBindJSON(&body); err != nil {
-		response.FailCode(c, apperr.CodeMCAInvalidRequest, "请求参数格式错误: "+err.Error())
-		return
-	}
-
-	party, err := h.svc.CreateParty(c.Request.Context(), uid, body.MatchType)
-	if err != nil {
-		response.Fail(c, "创建队伍失败", err)
-		return
-	}
-	response.Created(c, "队伍已创建", party)
-}
-
-// GetParty GET /api/matchmaking/party/:id
-func (h *MatchmakingHandler) GetParty(c *gin.Context) {
-	partyID, err := strconv.ParseInt(c.Param("id"), 10, 64)
-	if err != nil {
-		response.FailCode(c, apperr.CodeMCAInvalidRequest, "队伍 id 格式错误")
-		return
-	}
-	party, err := h.svc.GetParty(c.Request.Context(), partyID)
-	if err != nil {
-		response.Fail(c, "查询队伍失败", err)
-		return
-	}
-	response.OK(c, "查询队伍成功", party)
-}
-
-// JoinParty POST /api/matchmaking/party/:id/join
-func (h *MatchmakingHandler) JoinParty(c *gin.Context) {
-	uid := middleware.GetUID(c)
-	partyID, err := strconv.ParseInt(c.Param("id"), 10, 64)
-	if err != nil {
-		response.FailCode(c, apperr.CodeMCAInvalidRequest, "队伍 id 格式错误")
-		return
-	}
-	party, err := h.svc.JoinParty(c.Request.Context(), uid, partyID)
-	if err != nil {
-		response.Fail(c, "加入队伍失败", err)
-		return
-	}
-	response.OK(c, "已加入队伍", party)
-}
-
-// LeaveParty DELETE /api/matchmaking/party/:id
-// 成员离开队伍；队长调用即解散队伍。
-func (h *MatchmakingHandler) LeaveParty(c *gin.Context) {
-	uid := middleware.GetUID(c)
-	partyID, err := strconv.ParseInt(c.Param("id"), 10, 64)
-	if err != nil {
-		response.FailCode(c, apperr.CodeMCAInvalidRequest, "队伍 id 格式错误")
-		return
-	}
-	if err := h.svc.LeaveParty(c.Request.Context(), uid, partyID); err != nil {
-		response.Fail(c, "离开队伍失败", err)
-		return
-	}
-	response.OK(c, "已离开队伍", nil)
 }

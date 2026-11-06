@@ -1,7 +1,6 @@
 package service_test
 
 import (
-	"database/sql/driver"
 	"errors"
 	"net/http"
 	"testing"
@@ -32,7 +31,7 @@ func testMatchmakingConfig() config.MatchmakingConfig {
 }
 
 // TestMatchmakingJoinLeaveStatus 覆盖入队（懒建行取评分快照）、
-// 重复入队 409、离队（单人/整队）、不在队 404 与状态查询。
+// 重复入队 409、离队（单人/整队并清理队伍）、不在队 404 与状态查询。
 func TestMatchmakingJoinLeaveStatus(t *testing.T) {
 	t.Run("join with existing users row", func(t *testing.T) {
 		db, mock, err := sqlmock.New()
@@ -40,7 +39,7 @@ func TestMatchmakingJoinLeaveStatus(t *testing.T) {
 			t.Fatalf("sqlmock: %v", err)
 		}
 		t.Cleanup(func() { _ = db.Close() })
-		svc := service.NewMatchmakingService(db, testMatchmakingConfig())
+		svc := service.NewMatchmakingService(db, testMatchmakingConfig(), nil, nil)
 
 		mock.ExpectQuery(`SELECT party_id FROM matchmaking_party_members WHERE user_uid = \?`).
 			WithArgs(int64(7)).
@@ -55,7 +54,7 @@ func TestMatchmakingJoinLeaveStatus(t *testing.T) {
 			WithArgs(int64(7)).
 			WillReturnRows(sqlmock.NewRows([]string{"enqueued_at"}).AddRow("2026-11-06 10:00:00"))
 
-		entries, err := svc.Join(t.Context(), 7, "1v1", 0)
+		entries, err := svc.Join(t.Context(), 7, "1v1", nil)
 		if err != nil {
 			t.Fatalf("Join: %v", err)
 		}
@@ -76,7 +75,7 @@ func TestMatchmakingJoinLeaveStatus(t *testing.T) {
 			t.Fatalf("sqlmock: %v", err)
 		}
 		t.Cleanup(func() { _ = db.Close() })
-		svc := service.NewMatchmakingService(db, testMatchmakingConfig())
+		svc := service.NewMatchmakingService(db, testMatchmakingConfig(), nil, nil)
 
 		mock.ExpectQuery(`SELECT party_id FROM matchmaking_party_members WHERE user_uid = \?`).
 			WithArgs(int64(9)).
@@ -97,7 +96,7 @@ func TestMatchmakingJoinLeaveStatus(t *testing.T) {
 			WithArgs(int64(9)).
 			WillReturnRows(sqlmock.NewRows([]string{"enqueued_at"}).AddRow("2026-11-06 10:00:00"))
 
-		if _, err := svc.Join(t.Context(), 9, "1v1", 0); err != nil {
+		if _, err := svc.Join(t.Context(), 9, "1v1", nil); err != nil {
 			t.Fatalf("Join: %v", err)
 		}
 		if err := mock.ExpectationsWereMet(); err != nil {
@@ -111,13 +110,13 @@ func TestMatchmakingJoinLeaveStatus(t *testing.T) {
 			t.Fatalf("sqlmock: %v", err)
 		}
 		t.Cleanup(func() { _ = db.Close() })
-		svc := service.NewMatchmakingService(db, testMatchmakingConfig())
+		svc := service.NewMatchmakingService(db, testMatchmakingConfig(), nil, nil)
 
 		mock.ExpectQuery(`SELECT party_id FROM matchmaking_party_members WHERE user_uid = \?`).
 			WithArgs(int64(7)).
 			WillReturnRows(sqlmock.NewRows([]string{"party_id"}).AddRow(5))
 
-		_, err = svc.Join(t.Context(), 7, "1v1", 0)
+		_, err = svc.Join(t.Context(), 7, "1v1", nil)
 		var ae *apperr.Error
 		if !errors.As(err, &ae) || ae.Code != apperr.CodeMCAPartyAlreadyInParty {
 			t.Fatalf("err = %v, want mca_party_already_in_party", err)
@@ -130,7 +129,7 @@ func TestMatchmakingJoinLeaveStatus(t *testing.T) {
 			t.Fatalf("sqlmock: %v", err)
 		}
 		t.Cleanup(func() { _ = db.Close() })
-		svc := service.NewMatchmakingService(db, testMatchmakingConfig())
+		svc := service.NewMatchmakingService(db, testMatchmakingConfig(), nil, nil)
 
 		mock.ExpectQuery(`SELECT party_id FROM matchmaking_party_members WHERE user_uid = \?`).
 			WithArgs(int64(7)).
@@ -142,7 +141,7 @@ func TestMatchmakingJoinLeaveStatus(t *testing.T) {
 			WithArgs(int64(7), "1v1", 1500, nil).
 			WillReturnError(&gomysql.MySQLError{Number: 1062, Message: "Duplicate entry"})
 
-		_, err = svc.Join(t.Context(), 7, "1v1", 0)
+		_, err = svc.Join(t.Context(), 7, "1v1", nil)
 		var ae *apperr.Error
 		if !errors.As(err, &ae) || ae.Code != apperr.CodeMCAQueueAlreadyJoined {
 			t.Fatalf("err = %v, want mca_queue_already_joined", err)
@@ -158,9 +157,9 @@ func TestMatchmakingJoinLeaveStatus(t *testing.T) {
 			t.Fatalf("sqlmock: %v", err)
 		}
 		t.Cleanup(func() { _ = db.Close() })
-		svc := service.NewMatchmakingService(db, testMatchmakingConfig())
+		svc := service.NewMatchmakingService(db, testMatchmakingConfig(), nil, nil)
 
-		_, err = svc.Join(t.Context(), 7, "4v4", 0)
+		_, err = svc.Join(t.Context(), 7, "4v4", nil)
 		var ae *apperr.Error
 		if !errors.As(err, &ae) || ae.Code != apperr.CodeMCAInvalidRequest {
 			t.Fatalf("err = %v, want mca_invalid_request", err)
@@ -175,9 +174,9 @@ func TestMatchmakingJoinLeaveStatus(t *testing.T) {
 		t.Cleanup(func() { _ = db.Close() })
 		cfg := testMatchmakingConfig()
 		cfg.Enabled = false
-		svc := service.NewMatchmakingService(db, cfg)
+		svc := service.NewMatchmakingService(db, cfg, nil, nil)
 
-		_, err = svc.Join(t.Context(), 7, "1v1", 0)
+		_, err = svc.Join(t.Context(), 7, "1v1", nil)
 		var ae *apperr.Error
 		if !errors.As(err, &ae) || ae.Code != apperr.CodeMCAInvalidRequest {
 			t.Fatalf("err = %v, want mca_invalid_request", err)
@@ -190,7 +189,7 @@ func TestMatchmakingJoinLeaveStatus(t *testing.T) {
 			t.Fatalf("sqlmock: %v", err)
 		}
 		t.Cleanup(func() { _ = db.Close() })
-		svc := service.NewMatchmakingService(db, testMatchmakingConfig())
+		svc := service.NewMatchmakingService(db, testMatchmakingConfig(), nil, nil)
 
 		mock.ExpectQuery(`SELECT party_id FROM matchmaking_queue WHERE user_uid = \?`).
 			WithArgs(int64(7)).
@@ -206,13 +205,13 @@ func TestMatchmakingJoinLeaveStatus(t *testing.T) {
 		}
 	})
 
-	t.Run("leave removes whole party queue", func(t *testing.T) {
+	t.Run("leave removes whole party queue and cleans up party", func(t *testing.T) {
 		db, mock, err := sqlmock.New()
 		if err != nil {
 			t.Fatalf("sqlmock: %v", err)
 		}
 		t.Cleanup(func() { _ = db.Close() })
-		svc := service.NewMatchmakingService(db, testMatchmakingConfig())
+		svc := service.NewMatchmakingService(db, testMatchmakingConfig(), nil, nil)
 
 		mock.ExpectQuery(`SELECT party_id FROM matchmaking_queue WHERE user_uid = \?`).
 			WithArgs(int64(7)).
@@ -220,6 +219,9 @@ func TestMatchmakingJoinLeaveStatus(t *testing.T) {
 		mock.ExpectExec(`DELETE FROM matchmaking_queue WHERE party_id = \?`).
 			WithArgs(int64(5)).
 			WillReturnResult(sqlmock.NewResult(0, 2))
+		mock.ExpectExec(`DELETE FROM matchmaking_parties WHERE id = \?`).
+			WithArgs(int64(5)).
+			WillReturnResult(sqlmock.NewResult(0, 1))
 
 		if err := svc.Leave(t.Context(), 7); err != nil {
 			t.Fatalf("Leave: %v", err)
@@ -230,210 +232,33 @@ func TestMatchmakingJoinLeaveStatus(t *testing.T) {
 	})
 }
 
-// partyRows 队伍查询期望：parties 主行 + 成员评分快照。
-func partyRows(mock sqlmock.Sqlmock, partyID, leaderUID int64, matchType string, members ...[]driver.Value) {
-	mock.ExpectQuery(`SELECT id, leader_uid, match_type, created_at FROM matchmaking_parties WHERE id = \?`).
-		WithArgs(partyID).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "leader_uid", "match_type", "created_at"}).
-			AddRow(partyID, leaderUID, matchType, "2026-11-06 10:00:00"))
-	rows := sqlmock.NewRows([]string{"user_uid", "rank_score", "joined_at"})
-	for _, m := range members {
-		rows.AddRow(m...)
-	}
-	mock.ExpectQuery(`SELECT pm\.user_uid, COALESCE\(u\.rank_score, 0\), pm\.created_at`).
-		WithArgs(partyID).
-		WillReturnRows(rows)
-}
-
-// TestPartyLifecycle 覆盖队伍创建/加入/离开/解散与类型化错误。
-func TestPartyLifecycle(t *testing.T) {
-	t.Run("create party", func(t *testing.T) {
-		db, mock, err := sqlmock.New()
-		if err != nil {
-			t.Fatalf("sqlmock: %v", err)
-		}
-		t.Cleanup(func() { _ = db.Close() })
-		svc := service.NewMatchmakingService(db, testMatchmakingConfig())
-
+// TestPartyJoin 覆盖 party_members 整队入队：UUID 解析、临时队伍建立、
+// 全队写队列，以及各类类型化拒绝。
+func TestPartyJoin(t *testing.T) {
+	// partyJoinFlow 登记整队入队的完整 SQL 期望（2v2，成员 7/8）。
+	partyJoinFlow := func(mock sqlmock.Sqlmock) {
 		mock.ExpectQuery(`SELECT party_id FROM matchmaking_party_members WHERE user_uid = \?`).
 			WithArgs(int64(7)).
 			WillReturnRows(sqlmock.NewRows([]string{"party_id"}))
+		mock.ExpectQuery(`SELECT party_id FROM matchmaking_party_members WHERE user_uid = \?`).
+			WithArgs(int64(8)).
+			WillReturnRows(sqlmock.NewRows([]string{"party_id"}))
+		mock.ExpectBegin()
 		mock.ExpectExec(`INSERT INTO matchmaking_parties \(leader_uid, match_type\) VALUES \(\?, \?\)`).
 			WithArgs(int64(7), "2v2").
 			WillReturnResult(sqlmock.NewResult(5, 1))
 		mock.ExpectExec(`INSERT INTO matchmaking_party_members \(party_id, user_uid\) VALUES \(\?, \?\)`).
 			WithArgs(int64(5), int64(7)).
 			WillReturnResult(sqlmock.NewResult(1, 1))
-		partyRows(mock, 5, 7, "2v2", []driver.Value{int64(7), 1500, "2026-11-06 10:00:00"})
-
-		party, err := svc.CreateParty(t.Context(), 7, "2v2")
-		if err != nil {
-			t.Fatalf("CreateParty: %v", err)
-		}
-		if party.ID != 5 || party.LeaderUID != 7 || len(party.Members) != 1 {
-			t.Errorf("unexpected party: %+v", party)
-		}
-		if err := mock.ExpectationsWereMet(); err != nil {
-			t.Fatalf("unmet expectations: %v", err)
-		}
-	})
-
-	t.Run("create party while already in one answers 409", func(t *testing.T) {
-		db, mock, err := sqlmock.New()
-		if err != nil {
-			t.Fatalf("sqlmock: %v", err)
-		}
-		t.Cleanup(func() { _ = db.Close() })
-		svc := service.NewMatchmakingService(db, testMatchmakingConfig())
-
-		mock.ExpectQuery(`SELECT party_id FROM matchmaking_party_members WHERE user_uid = \?`).
-			WithArgs(int64(7)).
-			WillReturnRows(sqlmock.NewRows([]string{"party_id"}).AddRow(3))
-
-		_, err = svc.CreateParty(t.Context(), 7, "2v2")
-		var ae *apperr.Error
-		if !errors.As(err, &ae) || ae.Code != apperr.CodeMCAPartyAlreadyInParty {
-			t.Fatalf("err = %v, want mca_party_already_in_party", err)
-		}
-	})
-
-	t.Run("join party", func(t *testing.T) {
-		db, mock, err := sqlmock.New()
-		if err != nil {
-			t.Fatalf("sqlmock: %v", err)
-		}
-		t.Cleanup(func() { _ = db.Close() })
-		svc := service.NewMatchmakingService(db, testMatchmakingConfig())
-
-		partyRows(mock, 5, 7, "2v2", []driver.Value{int64(7), 1500, "2026-11-06 10:00:00"})
-		mock.ExpectQuery(`SELECT party_id FROM matchmaking_party_members WHERE user_uid = \?`).
-			WithArgs(int64(8)).
-			WillReturnRows(sqlmock.NewRows([]string{"party_id"}))
-		mock.ExpectExec(`INSERT INTO matchmaking_party_members \(party_id, user_uid\) VALUES \(\?, \?\)`).
-			WithArgs(int64(5), int64(8)).
-			WillReturnResult(sqlmock.NewResult(2, 1))
-		partyRows(mock, 5, 7, "2v2",
-			[]driver.Value{int64(7), 1500, "2026-11-06 10:00:00"},
-			[]driver.Value{int64(8), 1600, "2026-11-06 10:01:00"})
-
-		party, err := svc.JoinParty(t.Context(), 8, 5)
-		if err != nil {
-			t.Fatalf("JoinParty: %v", err)
-		}
-		if len(party.Members) != 2 {
-			t.Errorf("members = %d, want 2", len(party.Members))
-		}
-		if err := mock.ExpectationsWereMet(); err != nil {
-			t.Fatalf("unmet expectations: %v", err)
-		}
-	})
-
-	t.Run("join party full answers 409", func(t *testing.T) {
-		db, mock, err := sqlmock.New()
-		if err != nil {
-			t.Fatalf("sqlmock: %v", err)
-		}
-		t.Cleanup(func() { _ = db.Close() })
-		svc := service.NewMatchmakingService(db, testMatchmakingConfig())
-
-		// 2v2 单队上限 2 人：已有 2 名成员时第三人加入被拒。
-		partyRows(mock, 5, 7, "2v2",
-			[]driver.Value{int64(7), 1500, "2026-11-06 10:00:00"},
-			[]driver.Value{int64(8), 1600, "2026-11-06 10:01:00"})
-		mock.ExpectQuery(`SELECT party_id FROM matchmaking_party_members WHERE user_uid = \?`).
-			WithArgs(int64(9)).
-			WillReturnRows(sqlmock.NewRows([]string{"party_id"}))
-
-		_, err = svc.JoinParty(t.Context(), 9, 5)
-		var ae *apperr.Error
-		if !errors.As(err, &ae) || ae.Code != apperr.CodeMCAPartyFull {
-			t.Fatalf("err = %v, want mca_party_full", err)
-		}
-	})
-
-	t.Run("leader leave disbands party", func(t *testing.T) {
-		db, mock, err := sqlmock.New()
-		if err != nil {
-			t.Fatalf("sqlmock: %v", err)
-		}
-		t.Cleanup(func() { _ = db.Close() })
-		svc := service.NewMatchmakingService(db, testMatchmakingConfig())
-
-		partyRows(mock, 5, 7, "2v2",
-			[]driver.Value{int64(7), 1500, "2026-11-06 10:00:00"},
-			[]driver.Value{int64(8), 1600, "2026-11-06 10:01:00"})
-		mock.ExpectExec(`DELETE FROM matchmaking_parties WHERE id = \?`).
-			WithArgs(int64(5)).
-			WillReturnResult(sqlmock.NewResult(0, 1))
-
-		if err := svc.LeaveParty(t.Context(), 7, 5); err != nil {
-			t.Fatalf("LeaveParty: %v", err)
-		}
-		if err := mock.ExpectationsWereMet(); err != nil {
-			t.Fatalf("unmet expectations: %v", err)
-		}
-	})
-
-	t.Run("leave party as non-member answers 404", func(t *testing.T) {
-		db, mock, err := sqlmock.New()
-		if err != nil {
-			t.Fatalf("sqlmock: %v", err)
-		}
-		t.Cleanup(func() { _ = db.Close() })
-		svc := service.NewMatchmakingService(db, testMatchmakingConfig())
-
-		partyRows(mock, 5, 7, "2v2", []driver.Value{int64(7), 1500, "2026-11-06 10:00:00"})
-
-		err = svc.LeaveParty(t.Context(), 9, 5)
-		var ae *apperr.Error
-		if !errors.As(err, &ae) || ae.Code != apperr.CodeMCAPartyNotFound {
-			t.Fatalf("err = %v, want mca_party_not_found", err)
-		}
-	})
-
-	t.Run("get missing party answers 404", func(t *testing.T) {
-		db, mock, err := sqlmock.New()
-		if err != nil {
-			t.Fatalf("sqlmock: %v", err)
-		}
-		t.Cleanup(func() { _ = db.Close() })
-		svc := service.NewMatchmakingService(db, testMatchmakingConfig())
-
-		mock.ExpectQuery(`SELECT id, leader_uid, match_type, created_at FROM matchmaking_parties WHERE id = \?`).
-			WithArgs(int64(99)).
-			WillReturnRows(sqlmock.NewRows([]string{"id", "leader_uid", "match_type", "created_at"}))
-
-		_, err = svc.GetParty(t.Context(), 99)
-		var ae *apperr.Error
-		if !errors.As(err, &ae) || ae.Code != apperr.CodeMCAPartyNotFound {
-			t.Fatalf("err = %v, want mca_party_not_found", err)
-		}
-		if ae.HTTPStatus() != http.StatusNotFound {
-			t.Fatalf("status = %d, want 404", ae.HTTPStatus())
-		}
-	})
-}
-
-// TestPartyQueueJoin 覆盖以队伍为单位的整体入队。
-func TestPartyQueueJoin(t *testing.T) {
-	t.Run("leader enqueues whole party", func(t *testing.T) {
-		db, mock, err := sqlmock.New()
-		if err != nil {
-			t.Fatalf("sqlmock: %v", err)
-		}
-		t.Cleanup(func() { _ = db.Close() })
-		svc := service.NewMatchmakingService(db, testMatchmakingConfig())
-
-		partyRows(mock, 5, 7, "2v2",
-			[]driver.Value{int64(7), 1500, "2026-11-06 10:00:00"},
-			[]driver.Value{int64(8), 1600, "2026-11-06 10:01:00"})
-		mock.ExpectBegin()
 		mock.ExpectQuery(`SELECT rank_score FROM users WHERE uid = \? AND deleted_at IS NULL`).
 			WithArgs(int64(7)).
 			WillReturnRows(sqlmock.NewRows([]string{"rank_score"}).AddRow(1500))
 		mock.ExpectExec(`INSERT INTO matchmaking_queue`).
 			WithArgs(int64(7), "2v2", 1500, int64(5)).
 			WillReturnResult(sqlmock.NewResult(1, 1))
+		mock.ExpectExec(`INSERT INTO matchmaking_party_members \(party_id, user_uid\) VALUES \(\?, \?\)`).
+			WithArgs(int64(5), int64(8)).
+			WillReturnResult(sqlmock.NewResult(2, 1))
 		mock.ExpectQuery(`SELECT rank_score FROM users WHERE uid = \? AND deleted_at IS NULL`).
 			WithArgs(int64(8)).
 			WillReturnRows(sqlmock.NewRows([]string{"rank_score"}).AddRow(1600))
@@ -441,8 +266,19 @@ func TestPartyQueueJoin(t *testing.T) {
 			WithArgs(int64(8), "2v2", 1600, int64(5)).
 			WillReturnResult(sqlmock.NewResult(2, 1))
 		mock.ExpectCommit()
+	}
 
-		entries, err := svc.Join(t.Context(), 7, "2v2", 5)
+	t.Run("party members enqueue as a unit", func(t *testing.T) {
+		db, mock, err := sqlmock.New()
+		if err != nil {
+			t.Fatalf("sqlmock: %v", err)
+		}
+		t.Cleanup(func() { _ = db.Close() })
+		svc := service.NewMatchmakingService(db, testMatchmakingConfig(), newReportFakeHRPAuth(t), nil)
+
+		partyJoinFlow(mock)
+
+		entries, err := svc.Join(t.Context(), 1, "2v2", []string{"uuid-1", "uuid-2"})
 		if err != nil {
 			t.Fatalf("Join: %v", err)
 		}
@@ -454,47 +290,141 @@ func TestPartyQueueJoin(t *testing.T) {
 				t.Errorf("entry party_id = %d, want 5", e.PartyID)
 			}
 		}
+		if entries[0].UID != 7 || entries[1].UID != 8 {
+			t.Errorf("entry uids = %d/%d, want 7/8 (roster order)", entries[0].UID, entries[1].UID)
+		}
 		if err := mock.ExpectationsWereMet(); err != nil {
 			t.Fatalf("unmet expectations: %v", err)
 		}
 	})
 
-	t.Run("non-leader cannot enqueue party", func(t *testing.T) {
-		db, mock, err := sqlmock.New()
+	t.Run("unknown member uuid answers 404", func(t *testing.T) {
+		db, _, err := sqlmock.New()
 		if err != nil {
 			t.Fatalf("sqlmock: %v", err)
 		}
 		t.Cleanup(func() { _ = db.Close() })
-		svc := service.NewMatchmakingService(db, testMatchmakingConfig())
+		svc := service.NewMatchmakingService(db, testMatchmakingConfig(), newReportFakeHRPAuth(t), nil)
 
-		partyRows(mock, 5, 7, "2v2",
-			[]driver.Value{int64(7), 1500, "2026-11-06 10:00:00"},
-			[]driver.Value{int64(8), 1600, "2026-11-06 10:01:00"})
-
-		_, err = svc.Join(t.Context(), 8, "2v2", 5)
+		_, err = svc.Join(t.Context(), 1, "2v2", []string{"uuid-1", "uuid-unknown"})
 		var ae *apperr.Error
-		if !errors.As(err, &ae) || ae.Code != apperr.CodeMCANotPartyLeader {
-			t.Fatalf("err = %v, want mca_not_party_leader", err)
+		if !errors.As(err, &ae) || ae.Code != apperr.CodeMCAUserNotFound {
+			t.Fatalf("err = %v, want mca_user_not_found", err)
 		}
-		if ae.HTTPStatus() != http.StatusForbidden {
-			t.Fatalf("status = %d, want 403", ae.HTTPStatus())
+		if ae.HTTPStatus() != http.StatusNotFound {
+			t.Fatalf("status = %d, want 404", ae.HTTPStatus())
 		}
 	})
 
-	t.Run("party mode mismatch rejected", func(t *testing.T) {
+	t.Run("single member rejected", func(t *testing.T) {
+		db, _, err := sqlmock.New()
+		if err != nil {
+			t.Fatalf("sqlmock: %v", err)
+		}
+		t.Cleanup(func() { _ = db.Close() })
+		svc := service.NewMatchmakingService(db, testMatchmakingConfig(), newReportFakeHRPAuth(t), nil)
+
+		_, err = svc.Join(t.Context(), 1, "2v2", []string{"uuid-1"})
+		var ae *apperr.Error
+		if !errors.As(err, &ae) || ae.Code != apperr.CodeMCAInvalidRequest {
+			t.Fatalf("err = %v, want mca_invalid_request", err)
+		}
+	})
+
+	t.Run("oversized party rejected", func(t *testing.T) {
+		db, _, err := sqlmock.New()
+		if err != nil {
+			t.Fatalf("sqlmock: %v", err)
+		}
+		t.Cleanup(func() { _ = db.Close() })
+		svc := service.NewMatchmakingService(db, testMatchmakingConfig(), newReportFakeHRPAuth(t), nil)
+
+		_, err = svc.Join(t.Context(), 1, "2v2", []string{"uuid-1", "uuid-2", "uuid-3"})
+		var ae *apperr.Error
+		if !errors.As(err, &ae) || ae.Code != apperr.CodeMCAPartyFull {
+			t.Fatalf("err = %v, want mca_party_full", err)
+		}
+	})
+
+	t.Run("duplicate uuid rejected", func(t *testing.T) {
+		db, _, err := sqlmock.New()
+		if err != nil {
+			t.Fatalf("sqlmock: %v", err)
+		}
+		t.Cleanup(func() { _ = db.Close() })
+		svc := service.NewMatchmakingService(db, testMatchmakingConfig(), newReportFakeHRPAuth(t), nil)
+
+		_, err = svc.Join(t.Context(), 1, "2v2", []string{"uuid-1", "uuid-1"})
+		var ae *apperr.Error
+		if !errors.As(err, &ae) || ae.Code != apperr.CodeMCAInvalidRequest {
+			t.Fatalf("err = %v, want mca_invalid_request", err)
+		}
+	})
+
+	t.Run("member already in another party answers 409", func(t *testing.T) {
 		db, mock, err := sqlmock.New()
 		if err != nil {
 			t.Fatalf("sqlmock: %v", err)
 		}
 		t.Cleanup(func() { _ = db.Close() })
-		svc := service.NewMatchmakingService(db, testMatchmakingConfig())
+		svc := service.NewMatchmakingService(db, testMatchmakingConfig(), newReportFakeHRPAuth(t), nil)
 
-		partyRows(mock, 5, 7, "2v2", []driver.Value{int64(7), 1500, "2026-11-06 10:00:00"})
+		mock.ExpectQuery(`SELECT party_id FROM matchmaking_party_members WHERE user_uid = \?`).
+			WithArgs(int64(7)).
+			WillReturnRows(sqlmock.NewRows([]string{"party_id"}).AddRow(3))
 
-		_, err = svc.Join(t.Context(), 7, "1v1", 5)
+		_, err = svc.Join(t.Context(), 1, "2v2", []string{"uuid-1", "uuid-2"})
 		var ae *apperr.Error
-		if !errors.As(err, &ae) || ae.Code != apperr.CodeMCAInvalidRequest {
-			t.Fatalf("err = %v, want mca_invalid_request", err)
+		if !errors.As(err, &ae) || ae.Code != apperr.CodeMCAPartyAlreadyInParty {
+			t.Fatalf("err = %v, want mca_party_already_in_party", err)
+		}
+	})
+
+	t.Run("member already queued answers 409", func(t *testing.T) {
+		db, mock, err := sqlmock.New()
+		if err != nil {
+			t.Fatalf("sqlmock: %v", err)
+		}
+		t.Cleanup(func() { _ = db.Close() })
+		svc := service.NewMatchmakingService(db, testMatchmakingConfig(), newReportFakeHRPAuth(t), nil)
+
+		mock.ExpectQuery(`SELECT party_id FROM matchmaking_party_members WHERE user_uid = \?`).
+			WithArgs(int64(7)).
+			WillReturnRows(sqlmock.NewRows([]string{"party_id"}))
+		mock.ExpectQuery(`SELECT party_id FROM matchmaking_party_members WHERE user_uid = \?`).
+			WithArgs(int64(8)).
+			WillReturnRows(sqlmock.NewRows([]string{"party_id"}))
+		mock.ExpectBegin()
+		mock.ExpectExec(`INSERT INTO matchmaking_parties`).
+			WithArgs(int64(7), "2v2").
+			WillReturnResult(sqlmock.NewResult(5, 1))
+		mock.ExpectExec(`INSERT INTO matchmaking_party_members`).
+			WithArgs(int64(5), int64(7)).
+			WillReturnResult(sqlmock.NewResult(1, 1))
+		mock.ExpectQuery(`SELECT rank_score FROM users WHERE uid = \? AND deleted_at IS NULL`).
+			WithArgs(int64(7)).
+			WillReturnRows(sqlmock.NewRows([]string{"rank_score"}).AddRow(1500))
+		mock.ExpectExec(`INSERT INTO matchmaking_queue`).
+			WithArgs(int64(7), "2v2", 1500, int64(5)).
+			WillReturnResult(sqlmock.NewResult(1, 1))
+		mock.ExpectExec(`INSERT INTO matchmaking_party_members`).
+			WithArgs(int64(5), int64(8)).
+			WillReturnResult(sqlmock.NewResult(2, 1))
+		mock.ExpectQuery(`SELECT rank_score FROM users WHERE uid = \? AND deleted_at IS NULL`).
+			WithArgs(int64(8)).
+			WillReturnRows(sqlmock.NewRows([]string{"rank_score"}).AddRow(1600))
+		mock.ExpectExec(`INSERT INTO matchmaking_queue`).
+			WithArgs(int64(8), "2v2", 1600, int64(5)).
+			WillReturnError(&gomysql.MySQLError{Number: 1062, Message: "Duplicate entry"})
+		mock.ExpectRollback()
+
+		_, err = svc.Join(t.Context(), 1, "2v2", []string{"uuid-1", "uuid-2"})
+		var ae *apperr.Error
+		if !errors.As(err, &ae) || ae.Code != apperr.CodeMCAQueueAlreadyJoined {
+			t.Fatalf("err = %v, want mca_queue_already_joined", err)
+		}
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Fatalf("unmet expectations: %v", err)
 		}
 	})
 }

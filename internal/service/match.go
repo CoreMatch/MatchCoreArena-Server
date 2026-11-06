@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"sort"
-	"strconv"
 	"time"
 
 	gomysql "github.com/go-sql-driver/mysql"
@@ -239,6 +238,12 @@ func validateTeams(teams []TeamInfo, durationSeconds int) error {
 				return apperr.New(apperr.CodeMCAReportInconsistent,
 					fmt.Sprintf("参与者 %s 的 kills/deaths/survival_time 不能为负数", m.UUID))
 			}
+			// 与上报方前端校验同口径：perf_tweak 只接受未提供（0）或
+			// [0.95, 1.05] 区间内的值，越界直接拒绝而非静默截断。
+			if m.PerfTweak != 0 && (m.PerfTweak < 0.95 || m.PerfTweak > 1.05) {
+				return apperr.New(apperr.CodeMCAReportInconsistent,
+					fmt.Sprintf("参与者 %s 的 perf_tweak 必须在 [0.95, 1.05] 区间内（或省略）", m.UUID))
+			}
 			if seenUUID[m.UUID] {
 				return apperr.New(apperr.CodeMCAReportInconsistent,
 					fmt.Sprintf("参与者 uuid 重复: %s", m.UUID))
@@ -347,6 +352,11 @@ func (s *matchService) Report(ctx context.Context, reporterUID int64, in TeamRep
 	startedAt, finishedAt, err := parseReportTimes(in.StartedAt, in.FinishedAt)
 	if err != nil {
 		return nil, false, err
+	}
+	// 与上报方前端校验同口径：提供了时长则必须与起止时刻差一致。
+	if in.DurationSeconds > 0 && int64(in.DurationSeconds) != int64(finishedAt.Sub(startedAt)/time.Second) {
+		return nil, false, apperr.New(apperr.CodeMCAReportInconsistent,
+			"duration_seconds 与 finished_at - started_at 不一致")
 	}
 
 	source := in.Source
@@ -720,16 +730,7 @@ type userRatingInfo struct {
 }
 
 func (s *matchService) resolveUID(ctx context.Context, uuid string) (int64, error) {
-	// 1. 尝试从 Redis 缓存获取
-	cacheKey := "mca:uuid_to_uid:" + uuid
-	if s.redis != nil {
-		if val, err := s.redis.Get(ctx, cacheKey).Result(); err == nil && val != "" {
-			return strconv.ParseInt(val, 10, 64)
-		}
-	}
-
-	// 2. 调用 HRPAuth API（ops 级服务端点，服务令牌鉴权）
-	uid, err := s.authClient.LookupUserByUUID(ctx, uuid)
+	uid, err := resolveUUID(ctx, s.authClient, s.redis, uuid)
 	if err != nil {
 		if errors.Is(err, auth.ErrUserNotFound) {
 			return 0, fmt.Errorf("用户不存在: %w", err)
@@ -739,12 +740,6 @@ func (s *matchService) resolveUID(ctx context.Context, uuid string) (int64, erro
 		}
 		return 0, fmt.Errorf("调用 HRPAuth 失败: %w", err)
 	}
-
-	// 3. 写入 Redis 缓存 (暂存)
-	if s.redis != nil {
-		s.redis.Set(ctx, cacheKey, strconv.FormatInt(uid, 10), 24*time.Hour)
-	}
-
 	return uid, nil
 }
 

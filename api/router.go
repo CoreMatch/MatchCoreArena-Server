@@ -29,7 +29,7 @@ func Register(r *gin.Engine, db *sql.DB, oauthClient *auth.Client, ver auth.Veri
 	matchSvc := service.NewMatchService(db, oauthClient, rdb)
 	rankingSvc := service.NewRankingService(db)
 	maintenanceSvc := service.NewMaintenanceService(db)
-	matchmakingSvc := service.NewMatchmakingService(db, appCfg.Matchmaking)
+	matchmakingSvc := service.NewMatchmakingService(db, appCfg.Matchmaking, oauthClient, rdb)
 
 	// 初始化 handler 层
 	authH := handler.NewAuthHandler(oauthClient, ver)
@@ -95,10 +95,6 @@ func Register(r *gin.Engine, db *sql.DB, oauthClient *auth.Client, ver auth.Veri
 		api.POST("/matchmaking/join", matchmakingH.Join)
 		api.DELETE("/matchmaking/leave", matchmakingH.Leave)
 		api.GET("/matchmaking/status", matchmakingH.Status)
-		api.POST("/matchmaking/party", matchmakingH.CreateParty)
-		api.GET("/matchmaking/party/:id", matchmakingH.GetParty)
-		api.POST("/matchmaking/party/:id/join", matchmakingH.JoinParty)
-		api.DELETE("/matchmaking/party/:id", matchmakingH.LeaveParty)
 
 		// metrics（仅 OPS 级凭据）
 		api.GET("/metrics", metricsH.Metrics)
