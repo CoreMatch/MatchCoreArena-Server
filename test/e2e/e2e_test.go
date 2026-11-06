@@ -213,6 +213,7 @@ func setupEnv(t *testing.T) *e2eEnv {
 				{MatchType: "1v1", TeamSizes: []int{1, 1}},
 				{MatchType: "2v2", TeamSizes: []int{2, 2}},
 			},
+			JoinTarget: config.JoinTargetConfig{Host: "e2e-game.example.com", Port: 25565},
 		},
 	}
 
@@ -661,6 +662,15 @@ func TestMatchCoreE2E(t *testing.T) {
 		}
 		if !uids[105] || !uids[106] {
 			t.Errorf("成局成员 = %v, want 105 与 106", uids)
+		}
+
+		// 成局记录携带游戏服务器地址（交接链路，与客户端 join_target 同形）。
+		jt, ok := group["join_target"].(map[string]any)
+		if !ok {
+			t.Fatalf("成局记录缺 join_target: %v", group)
+		}
+		if jt["host"] != "e2e-game.example.com" || jsonInt(t, jt, "port") != 25565 {
+			t.Errorf("join_target = %v, want e2e-game.example.com:25565", jt)
 		}
 
 		// 成局后双方均已出队。

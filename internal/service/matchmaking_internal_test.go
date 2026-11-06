@@ -78,6 +78,44 @@ func TestPackUnits(t *testing.T) {
 	})
 }
 
+// TestAttachJoinTarget 覆盖成局记录附加游戏服务器地址：配置了
+// join_target 时每条成局记录都携带；未配置时字段保持 nil（JSON 省略，
+// 客户端回落本地配置）。
+func TestAttachJoinTarget(t *testing.T) {
+	t.Run("configured attaches to every group", func(t *testing.T) {
+		s := &matchmakingService{cfg: config.MatchmakingConfig{
+			JoinTarget: config.JoinTargetConfig{Host: "play.example.com", Port: 25565},
+		}}
+		groups := []FormedGroup{{GroupID: 1}, {GroupID: 2}}
+		s.attachJoinTarget(groups)
+		for _, g := range groups {
+			if g.JoinTarget == nil || g.JoinTarget.Host != "play.example.com" || g.JoinTarget.Port != 25565 {
+				t.Errorf("group %d join_target = %+v, want play.example.com:25565", g.GroupID, g.JoinTarget)
+			}
+		}
+	})
+
+	t.Run("unconfigured leaves nil", func(t *testing.T) {
+		s := &matchmakingService{cfg: config.MatchmakingConfig{}}
+		groups := []FormedGroup{{GroupID: 1}}
+		s.attachJoinTarget(groups)
+		if groups[0].JoinTarget != nil {
+			t.Errorf("join_target = %+v, want nil when unconfigured", groups[0].JoinTarget)
+		}
+	})
+
+	t.Run("empty host with port stays unconfigured", func(t *testing.T) {
+		s := &matchmakingService{cfg: config.MatchmakingConfig{
+			JoinTarget: config.JoinTargetConfig{Host: "", Port: 25565},
+		}}
+		groups := []FormedGroup{{GroupID: 1}}
+		s.attachJoinTarget(groups)
+		if groups[0].JoinTarget != nil {
+			t.Errorf("join_target = %+v, want nil when host empty", groups[0].JoinTarget)
+		}
+	})
+}
+
 // TestRatingWindow 覆盖分差窗口随等待时长线性放宽并封顶。
 func TestRatingWindow(t *testing.T) {
 	e := &MatchmakingEngine{cfg: config.MatchmakingConfig{

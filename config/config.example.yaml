@@ -1,7 +1,7 @@
 # MatchCoreArena-Server 应用配置模板
 # 复制为 config.yaml 后按需修改；版本变更由 config 包自动迁移。
 
-version: "1.7.0"
+version: "1.8.0"
 
 server:
   host: "0.0.0.0"
@@ -61,3 +61,9 @@ matchmaking:
       team_sizes: [1, 1]
     - match_type: "2v2"
       team_sizes: [2, 2]
+  # 成局后下发给客户端的游戏服务器地址（交接链路用，字段名与客户端
+  # join_target 对齐）。留空（host 为空）时成局响应不携带该字段，
+  # 客户端回落本地配置。
+  join_target:
+    host: ""
+    port: 0
