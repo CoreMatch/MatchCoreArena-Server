@@ -94,6 +94,10 @@ func Register(r *gin.Engine, db *sql.DB, oauthClient *auth.Client, ver auth.Veri
 		api.POST("/matchmaking/join", matchmakingH.Join)
 		api.DELETE("/matchmaking/leave", matchmakingH.Leave)
 		api.GET("/matchmaking/status", matchmakingH.Status)
+		api.POST("/matchmaking/party", matchmakingH.CreateParty)
+		api.GET("/matchmaking/party/:id", matchmakingH.GetParty)
+		api.POST("/matchmaking/party/:id/join", matchmakingH.JoinParty)
+		api.DELETE("/matchmaking/party/:id", matchmakingH.LeaveParty)
 
 		// rankings（需要鉴权：与该组其他端点一致）
 		api.GET("/rankings/:type", rankingH.GetTop)
