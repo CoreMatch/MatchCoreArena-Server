@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"sort"
 	"strings"
 	"time"
@@ -53,11 +54,19 @@ type FormedGroup struct {
 	JoinTarget *JoinTarget   `json:"join_target,omitempty"`
 }
 
+// QueueStats 队列规模统计（只读展示用，不参与入队/成局逻辑）。
+type QueueStats struct {
+	Players            int64 `json:"players"`              // 当前排队玩家数
+	Parties            int64 `json:"parties"`              // 队伍数（按 party 计，单人不计）
+	AverageWaitSeconds int64 `json:"average_wait_seconds"` // 平均等待时长（秒）
+}
+
 // MatchmakingStatus 用户当前匹配状态。
 type MatchmakingStatus struct {
 	InQueue      bool          `json:"in_queue"`
 	QueueEntry   *QueueEntry   `json:"queue_entry,omitempty"`
 	RecentGroups []FormedGroup `json:"recent_groups"`
+	QueueStats   QueueStats    `json:"queue_stats"`
 }
 
 // MatchmakingService 匹配业务接口。
@@ -410,7 +419,29 @@ func (s *matchmakingService) Status(ctx context.Context, uid int64) (*Matchmakin
 		st.RecentGroups[i].Members = members
 	}
 	s.attachJoinTarget(st.RecentGroups)
+
+	stats, err := s.queueStats(ctx)
+	if err != nil {
+		return nil, err
+	}
+	st.QueueStats = stats
 	return st, nil
+}
+
+// queueStats 全局队列规模统计（只读）：排队玩家数、队伍数（按 party
+// 计，单人不计）、平均等待时长（秒，数据库侧计算避免时区偏差）。
+func (s *matchmakingService) queueStats(ctx context.Context) (QueueStats, error) {
+	var stats QueueStats
+	var avgWait float64
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*), COUNT(DISTINCT party_id), COALESCE(AVG(TIMESTAMPDIFF(SECOND, enqueued_at, NOW())), 0)
+		 FROM matchmaking_queue`,
+	).Scan(&stats.Players, &stats.Parties, &avgWait)
+	if err != nil {
+		return QueueStats{}, fmt.Errorf("查询队列统计失败: %w", err)
+	}
+	stats.AverageWaitSeconds = int64(math.Round(avgWait))
+	return stats, nil
 }
 
 // attachJoinTarget 为成局记录附加游戏服务器地址（仅当配置了

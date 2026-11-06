@@ -27,7 +27,7 @@ import (
 //  1. 将 CurrentVersion 提升到新版本；
 //  2. 在 migrations 列表中追加对应的迁移函数；
 //  3. 在 config.example.yaml 中同步更新。
-const CurrentVersion = "1.8.0"
+const CurrentVersion = "1.9.0"
 
 // AppConfig 应用配置根结构。
 type AppConfig struct {
@@ -37,6 +37,20 @@ type AppConfig struct {
 	Redis       RedisConfig       `yaml:"redis"`
 	Auth        AuthConfig        `yaml:"auth"`
 	Matchmaking MatchmakingConfig `yaml:"matchmaking"`
+	Ranking     RankingConfig     `yaml:"ranking"`
+}
+
+// RankingConfig 排行榜展示配置（纯展示，不参与结算、不引入赛季）。
+type RankingConfig struct {
+	// Tiers 段位阶梯（名称 + 分数下限），仅供前端展示进度条；
+	// 为空时前端不显示进度条。
+	Tiers []RankTier `yaml:"tiers"`
+}
+
+// RankTier 单个段位：名称与分数下限。
+type RankTier struct {
+	Name     string `yaml:"name" json:"name"`
+	MinScore int    `yaml:"min_score" json:"min_score"`
 }
 
 // MatchmakingConfig 匹配系统配置。
@@ -316,6 +330,15 @@ var migrations = []migration{
 			return in, nil
 		},
 	},
+	{
+		from: "1.8.0",
+		to:   "1.9.0",
+		run: func(in rawConfig) (rawConfig, error) {
+			// 新增 ranking.tiers（段位阶梯，纯展示，可空）。
+			// 缺省即"无阶梯"：前端不显示进度条，无需写入默认值。
+			return in, nil
+		},
+	},
 }
 
 // Load 从指定路径加载配置文件，并完成版本校验/迁移，最终反序列化为 AppConfig。
@@ -473,6 +496,16 @@ func validate(cfg *AppConfig) error {
 	// port 必须为合法端口。
 	if mm.JoinTarget.Configured() && (mm.JoinTarget.Port <= 0 || mm.JoinTarget.Port > 65535) {
 		return fmt.Errorf("matchmaking.join_target.port 非法: %d（配置 host 时端口必须在 1-65535）", mm.JoinTarget.Port)
+	}
+	// ranking.tiers 校验（1.9.0+）：纯展示配置，可为空；配置则名称必填、
+	// 分数下限非负。
+	for i, tier := range cfg.Ranking.Tiers {
+		if tier.Name == "" {
+			return fmt.Errorf("ranking.tiers[%d].name 必填", i)
+		}
+		if tier.MinScore < 0 {
+			return fmt.Errorf("ranking.tiers[%d].min_score 不能为负数", i)
+		}
 	}
 	return nil
 }

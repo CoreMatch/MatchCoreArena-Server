@@ -429,6 +429,40 @@ func TestPartyJoin(t *testing.T) {
 	})
 }
 
+// TestStatusQueueStats 覆盖匹配状态附带的队列规模统计（只读展示，
+// 不影响入队/成局）：玩家数、队伍数（按 party 计）、平均等待秒数。
+func TestStatusQueueStats(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	svc := service.NewMatchmakingService(db, testMatchmakingConfig(), nil, nil)
+
+	mock.ExpectQuery(`SELECT user_uid, match_type, rank_score, party_id, enqueued_at FROM matchmaking_queue WHERE user_uid = \?`).
+		WithArgs(int64(7)).
+		WillReturnRows(sqlmock.NewRows([]string{"user_uid", "match_type", "rank_score", "party_id", "enqueued_at"}))
+	mock.ExpectQuery(`SELECT g\.id, g\.match_type, g\.formed_at`).
+		WithArgs(int64(7)).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "match_type", "formed_at"}))
+	mock.ExpectQuery(`SELECT COUNT\(\*\), COUNT\(DISTINCT party_id\), COALESCE\(AVG\(TIMESTAMPDIFF\(SECOND, enqueued_at, NOW\(\)\)\), 0\)`).
+		WillReturnRows(sqlmock.NewRows([]string{"players", "parties", "avg_wait"}).AddRow(3, 1, 12.6))
+
+	st, err := svc.Status(t.Context(), 7)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if st.QueueStats.Players != 3 || st.QueueStats.Parties != 1 {
+		t.Errorf("queue stats = %+v, want players 3 parties 1", st.QueueStats)
+	}
+	if st.QueueStats.AverageWaitSeconds != 13 {
+		t.Errorf("average wait = %d, want 13 (12.6 四舍五入)", st.QueueStats.AverageWaitSeconds)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
+}
+
 // engineConfig1v1 / engineConfig2v2 引擎测试用单模式配置
 //（Tick 遍历全部模式，单模式便于登记 SQL 期望）。
 func engineConfig1v1() config.MatchmakingConfig {

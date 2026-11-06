@@ -215,6 +215,13 @@ func setupEnv(t *testing.T) *e2eEnv {
 			},
 			JoinTarget: config.JoinTargetConfig{Host: "e2e-game.example.com", Port: 25565},
 		},
+		Ranking: config.RankingConfig{
+			Tiers: []config.RankTier{
+				{Name: "青铜", MinScore: 0},
+				{Name: "白银", MinScore: 300},
+				{Name: "黄金", MinScore: 600},
+			},
+		},
 	}
 
 	gin.SetMode(gin.TestMode)
@@ -559,15 +566,20 @@ func TestMatchCoreE2E(t *testing.T) {
 		}
 	})
 
-	// 排行榜：rank_type=1v1 与 users.rank_score 一致。
+	// 排行榜：rank_type=1v1 与 users.rank_score 一致（data 为
+	// {rankings, total_count} 结构）。
 	t.Run("rankings reflect settled scores", func(t *testing.T) {
 		status, envelope := doJSON(t, env, http.MethodGet, "/api/rankings/1v1", userToken(101), nil)
 		if status != http.StatusOK {
 			t.Fatalf("status = %d, want 200 (body=%v)", status, envelope)
 		}
-		raw, ok := envelope["data"].([]any)
+		data := dataMap(t, envelope)
+		raw, ok := data["rankings"].([]any)
 		if !ok || len(raw) == 0 {
 			t.Fatalf("rankings 为空: %v", envelope)
+		}
+		if jsonInt(t, data, "total_count") != int64(len(raw)) {
+			t.Errorf("total_count = %d, want %d（与本页行数一致）", jsonInt(t, data, "total_count"), len(raw))
 		}
 		want := map[int64]int64{}
 		for _, uid := range []int64{101, 102, 103, 104} {
@@ -588,7 +600,22 @@ func TestMatchCoreE2E(t *testing.T) {
 		if status != http.StatusCreated {
 			t.Fatalf("join status = %d, want 201", status)
 		}
-		status, envelope := doJSON(t, env, http.MethodDelete, "/api/matchmaking/leave", userToken(103), nil)
+		// 队列规模统计（只读展示）：此时全局队列恰有 103 一名单人玩家。
+		status, envelope := doJSON(t, env, http.MethodGet, "/api/matchmaking/status", userToken(103), nil)
+		if status != http.StatusOK {
+			t.Fatalf("status 查询失败: %d %v", status, envelope)
+		}
+		stats, ok := dataMap(t, envelope)["queue_stats"].(map[string]any)
+		if !ok {
+			t.Fatalf("status 缺 queue_stats: %v", envelope)
+		}
+		if jsonInt(t, stats, "players") != 1 || jsonInt(t, stats, "parties") != 0 {
+			t.Errorf("queue_stats = %v, want players 1 parties 0", stats)
+		}
+		if jsonInt(t, stats, "average_wait_seconds") < 0 {
+			t.Errorf("average_wait_seconds = %v, want >= 0", stats["average_wait_seconds"])
+		}
+		status, envelope = doJSON(t, env, http.MethodDelete, "/api/matchmaking/leave", userToken(103), nil)
 		if status != http.StatusOK {
 			t.Fatalf("leave status = %d, want 200 (body=%v)", status, envelope)
 		}
@@ -759,6 +786,19 @@ func TestMatchCoreE2E(t *testing.T) {
 			t.Fatalf("party1 入队条目 = %d, want 2（整队）", len(entries))
 		}
 		party1 := jsonInt(t, entries[0].(map[string]any), "party_id")
+		// 队列统计：party1 整队在队（2v2 凑不齐不会被引擎消费）→
+		// 玩家 2、队伍 1。
+		status, envelope = doJSON(t, env, http.MethodGet, "/api/matchmaking/status", userToken(107), nil)
+		if status != http.StatusOK {
+			t.Fatalf("status 查询失败: %d %v", status, envelope)
+		}
+		stats, ok := dataMap(t, envelope)["queue_stats"].(map[string]any)
+		if !ok {
+			t.Fatalf("status 缺 queue_stats: %v", envelope)
+		}
+		if jsonInt(t, stats, "players") != 2 || jsonInt(t, stats, "parties") != 1 {
+			t.Errorf("queue_stats = %v, want players 2 parties 1（队伍按 party 计）", stats)
+		}
 		status, envelope = doJSON(t, env, http.MethodPost, "/api/matchmaking/join", userToken(109),
 			map[string]any{"match_type": "2v2", "party_members": []string{"e2e-uuid-9", "e2e-uuid-10"}})
 		if status != http.StatusCreated {
@@ -875,6 +915,7 @@ func TestMatchCoreE2E(t *testing.T) {
 	})
 
 	// 按玩家查历史战绩：101 参与 5 局（首局 + 批量 4 局）。
+	// 列表项携带"本人视角"摘要（本人所在队伍、胜负、分数变化）。
 	t.Run("user match history", func(t *testing.T) {
 		status, envelope := doJSON(t, env, http.MethodGet, "/api/users/101/matches", userToken(102), nil)
 		if status != http.StatusOK {
@@ -884,13 +925,92 @@ func TestMatchCoreE2E(t *testing.T) {
 			t.Fatalf("101 历史对局 = %d, want 5", len(matches))
 		}
 
-		// /api/matches/me 等价（本人视角）。
+		// /api/matches/me 等价（本人视角）：首局 101 胜，摘要为胜方视角。
+		status, envelope = doJSON(t, env, http.MethodGet, "/api/matches/me?page_size=100", userToken(101), nil)
+		if status != http.StatusOK {
+			t.Fatalf("status = %d, want 200 (body=%v)", status, envelope)
+		}
+		matches := dataArray(t, envelope)
+		if len(matches) != 5 {
+			t.Fatalf("101 历史对局 = %d, want 5", len(matches))
+		}
+		var first map[string]any
+		for _, item := range matches {
+			m := item.(map[string]any)
+			if jsonInt(t, m, "id") == match1ID {
+				first = m
+				break
+			}
+		}
+		if first == nil {
+			t.Fatalf("历史中未找到首局 id=%d", match1ID)
+		}
+		self, ok := first["self_summary"].(map[string]any)
+		if !ok {
+			t.Fatalf("列表项缺 self_summary: %v", first)
+		}
+		if self["team_id"] != "A" || self["is_winner"] != true ||
+			jsonInt(t, self, "rank_score_delta") != 325 || jsonInt(t, self, "rank_score_after") != 325 {
+			t.Errorf("101 首局 self_summary = %v, want team A 胜 delta 325 after 325", self)
+		}
+
+		// 同一局从 102 视角查询：摘要为败方视角。
+		status, envelope = doJSON(t, env, http.MethodGet, "/api/users/102/matches?page_size=100", userToken(101), nil)
+		if status != http.StatusOK {
+			t.Fatalf("status = %d, want 200 (body=%v)", status, envelope)
+		}
+		var loserView map[string]any
+		for _, item := range dataArray(t, envelope) {
+			m := item.(map[string]any)
+			if jsonInt(t, m, "id") == match1ID {
+				loserView = m
+				break
+			}
+		}
+		if loserView == nil {
+			t.Fatalf("102 历史中未找到首局 id=%d", match1ID)
+		}
+		loserSelf, ok := loserView["self_summary"].(map[string]any)
+		if !ok {
+			t.Fatalf("102 列表项缺 self_summary: %v", loserView)
+		}
+		if loserSelf["team_id"] != "B" || loserSelf["is_winner"] != false ||
+			jsonInt(t, loserSelf, "rank_score_delta") != -325 || jsonInt(t, loserSelf, "rank_score_after") != 0 {
+			t.Errorf("102 首局 self_summary = %v, want team B 负 delta -325 after 0", loserSelf)
+		}
+
+		// 分页兼容：page_size 生效，结构不变。
 		status, envelope = doJSON(t, env, http.MethodGet, "/api/matches/me?page_num=1&page_size=3", userToken(101), nil)
 		if status != http.StatusOK {
 			t.Fatalf("status = %d, want 200 (body=%v)", status, envelope)
 		}
 		if matches := dataArray(t, envelope); len(matches) != 3 {
 			t.Fatalf("分页 page_size=3 返回 %d 条, want 3", len(matches))
+		}
+	})
+
+	// 段位阶梯（纯展示配置）：配置了 3 档则按序返回；需要鉴权。
+	t.Run("ranking tiers", func(t *testing.T) {
+		status, envelope := doJSON(t, env, http.MethodGet, "/api/rankings/tiers", "", nil)
+		if status != http.StatusUnauthorized {
+			t.Fatalf("无令牌 status = %d, want 401 (body=%v)", status, envelope)
+		}
+
+		status, envelope = doJSON(t, env, http.MethodGet, "/api/rankings/tiers", userToken(101), nil)
+		if status != http.StatusOK {
+			t.Fatalf("status = %d, want 200 (body=%v)", status, envelope)
+		}
+		tiers := dataArray(t, envelope)
+		if len(tiers) != 3 {
+			t.Fatalf("tiers = %d, want 3", len(tiers))
+		}
+		wantNames := []string{"青铜", "白银", "黄金"}
+		wantScores := []int64{0, 300, 600}
+		for i, item := range tiers {
+			tier := item.(map[string]any)
+			if tier["name"] != wantNames[i] || jsonInt(t, tier, "min_score") != wantScores[i] {
+				t.Errorf("tier[%d] = %v, want %s/%d", i, tier, wantNames[i], wantScores[i])
+			}
 		}
 	})
 
