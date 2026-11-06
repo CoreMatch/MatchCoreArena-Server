@@ -3,6 +3,9 @@
 // Package e2e_test 是不依赖真实游戏的端到端验证：真实 MariaDB +
 // 完整路由/中间件/结算事务 + 内嵌 HRPAuth stub。
 //
+// 对局上报只有一个入口 POST /api/matches（仅 OPS 级凭据）；"虚拟对局"
+// 即运维方经该端点提交的 source=virtual 假数据，服务端不区分结算。
+//
 // 运行方式（需本地可用的 MySQL/MariaDB）：
 //
 //	MCA_E2E_MYSQL_DSN='mca:mca-e2e-pass@tcp(127.0.0.1:13306)/mca_e2e?parseTime=true&charset=utf8mb4' \
@@ -41,15 +44,19 @@ const (
 )
 
 // uuid→uid 映射（HRPAuth stub 解析用）。
-// 105/106 不参与任何对局，保持 0 分用于匹配闭环（分差 0 在基础窗口内，
-// 引擎首个 tick 即可成局）。
+// 101/102 评分结算与批量；103/104 平局与兼容形状；105/106 单人匹配
+// 与 game_id 幂等；107-110 组队匹配（全部 0 分起步，分差在基础窗口内）。
 var e2eUsers = map[string]int64{
-	"e2e-uuid-1": 101,
-	"e2e-uuid-2": 102,
-	"e2e-uuid-3": 103,
-	"e2e-uuid-4": 104,
-	"e2e-uuid-5": 105,
-	"e2e-uuid-6": 106,
+	"e2e-uuid-1":  101,
+	"e2e-uuid-2":  102,
+	"e2e-uuid-3":  103,
+	"e2e-uuid-4":  104,
+	"e2e-uuid-5":  105,
+	"e2e-uuid-6":  106,
+	"e2e-uuid-7":  107,
+	"e2e-uuid-8":  108,
+	"e2e-uuid-9":  109,
+	"e2e-uuid-10": 110,
 }
 
 // userToken 返回 uid 对应的玩家令牌（stub /user 识别）。
@@ -180,7 +187,7 @@ func setupEnv(t *testing.T) *e2eEnv {
 		t.Fatalf("初始化 HRPAuth 客户端失败: %v", err)
 	}
 
-	// tokens.yaml：match-reporter 静态服务令牌（真实部署同构）。
+	// tokens.yaml：match-reporter 静态服务令牌（真实部署同构，OPS 级）。
 	tokensPath := filepath.Join(t.TempDir(), "tokens.yaml")
 	tokensContent := "tokens:\n  match-reporter:\n    token: " + reporterToken +
 		"\n    uid: -100\n    scopes:\n      - \"match:report\"\n      - \"user:read\"\n"
@@ -194,8 +201,7 @@ func setupEnv(t *testing.T) *e2eEnv {
 	verifier := auth.NewTokenVerifier(authClient, nil, maintenanceToken, tokenStore)
 
 	appCfg := config.AppConfig{
-		Version:        config.CurrentVersion,
-		VirtualMatches: config.VirtualMatchesConfig{Enabled: true},
+		Version: config.CurrentVersion,
 		Matchmaking: config.MatchmakingConfig{
 			Enabled:                     true,
 			TickSeconds:                 1,
@@ -267,8 +273,17 @@ func dataMap(t *testing.T, envelope map[string]any) map[string]any {
 	return data
 }
 
-// virtualMatch 构造一局 1v1 虚拟对局。
-func virtualMatch(winnerUUID, loserUUID string) map[string]any {
+func dataArray(t *testing.T, envelope map[string]any) []any {
+	t.Helper()
+	data, ok := envelope["data"].([]any)
+	if !ok {
+		t.Fatalf("data 不是数组: %v", envelope)
+	}
+	return data
+}
+
+// matchReport 构造一局 1v1 上报（统一 teams 形状）。
+func matchReport(winnerUUID, loserUUID string) map[string]any {
 	return map[string]any{
 		"match_type": "1v1",
 		"teams": []map[string]any{
@@ -285,6 +300,7 @@ func virtualMatch(winnerUUID, loserUUID string) map[string]any {
 }
 
 // participantsFrom 提取结算响应中的参与者列表（uid → 明细）。
+// 上报响应的 data 即对局对象，内含 participants。
 func participantsFrom(t *testing.T, envelope map[string]any) map[int64]map[string]any {
 	t.Helper()
 	data := dataMap(t, envelope)
@@ -323,8 +339,9 @@ func jsonInt(t *testing.T, m map[string]any, key string) int64 {
 	return int64(v)
 }
 
-// TestVirtualMatchE2E 端到端：虚拟对局 → 定级结算 → 查询 → 匹配成局。
-func TestVirtualMatchE2E(t *testing.T) {
+// TestMatchCoreE2E 端到端：统一上报入口（OPS 门、幂等、矛盾拒绝）→
+// 定级结算 → 排行榜 → 单人/组队匹配成局 → 队伍共享结算 → 历史与指标。
+func TestMatchCoreE2E(t *testing.T) {
 	env := setupEnv(t)
 
 	t.Run("status endpoint", func(t *testing.T) {
@@ -334,8 +351,9 @@ func TestVirtualMatchE2E(t *testing.T) {
 		}
 	})
 
-	t.Run("virtual match without scope is rejected", func(t *testing.T) {
-		status, envelope := doJSON(t, env, http.MethodPost, "/api/matches/virtual", userToken(101), virtualMatch("e2e-uuid-1", "e2e-uuid-2"))
+	// OPS 门：玩家令牌（无 match:report scope 且非 OPS）一律 403。
+	t.Run("player token cannot report", func(t *testing.T) {
+		status, envelope := doJSON(t, env, http.MethodPost, "/api/matches", userToken(101), matchReport("e2e-uuid-1", "e2e-uuid-2"))
 		if status != http.StatusForbidden {
 			t.Fatalf("status = %d, want 403 (body=%v)", status, envelope)
 		}
@@ -347,16 +365,15 @@ func TestVirtualMatchE2E(t *testing.T) {
 	// 第一局：101 胜 102。双方 0 分起步：胜者 +325（K=520, E=0.5,
 	// 完胜权重 1.25），败者 -325（下限 0）。
 	var match1ID int64
-	t.Run("first virtual match settles ratings", func(t *testing.T) {
-		status, envelope := doJSON(t, env, http.MethodPost, "/api/matches/virtual", reporterToken, virtualMatch("e2e-uuid-1", "e2e-uuid-2"))
+	t.Run("first match settles ratings", func(t *testing.T) {
+		status, envelope := doJSON(t, env, http.MethodPost, "/api/matches", reporterToken, matchReport("e2e-uuid-1", "e2e-uuid-2"))
 		if status != http.StatusCreated {
 			t.Fatalf("status = %d, want 201 (body=%v)", status, envelope)
 		}
 		data := dataMap(t, envelope)
-		match := data["match"].(map[string]any)
-		match1ID = jsonInt(t, match, "id")
-		if match["source"] != "virtual" || match["map_name"] != "e2e-arena-1" {
-			t.Errorf("match source/map = %v/%v, want virtual/e2e-arena-1", match["source"], match["map_name"])
+		match1ID = jsonInt(t, data, "id")
+		if data["source"] != "game" || data["map_name"] != "e2e-arena-1" {
+			t.Errorf("match source/map = %v/%v, want game/e2e-arena-1", data["source"], data["map_name"])
 		}
 		parts := participantsFrom(t, envelope)
 		winner, loser := parts[101], parts[102]
@@ -384,14 +401,14 @@ func TestVirtualMatchE2E(t *testing.T) {
 		}
 	})
 
-	t.Run("match detail carries participants and source", func(t *testing.T) {
+	t.Run("match detail carries participants and fields", func(t *testing.T) {
 		status, envelope := doJSON(t, env, http.MethodGet, fmt.Sprintf("/api/matches/%d", match1ID), userToken(101), nil)
 		if status != http.StatusOK {
 			t.Fatalf("status = %d, want 200 (body=%v)", status, envelope)
 		}
 		data := dataMap(t, envelope)
-		if data["source"] != "virtual" {
-			t.Errorf("source = %v, want virtual", data["source"])
+		if data["source"] != "game" {
+			t.Errorf("source = %v, want game", data["source"])
 		}
 		parts, ok := data["participants"].([]any)
 		if !ok || len(parts) != 2 {
@@ -401,14 +418,14 @@ func TestVirtualMatchE2E(t *testing.T) {
 
 	// 批量灌入：再提交 4 局（交替胜负），逐局断言 before 与上一局
 	// after 衔接、after = max(0, before+delta)。
-	t.Run("batch virtual matches stay consistent", func(t *testing.T) {
+	t.Run("batch matches stay consistent", func(t *testing.T) {
 		tracked := map[int64]int64{101: 325, 102: 0}
 		for i := 0; i < 4; i++ {
 			winner, loser := "e2e-uuid-2", "e2e-uuid-1"
 			if i%2 == 0 {
 				winner, loser = "e2e-uuid-1", "e2e-uuid-2"
 			}
-			status, envelope := doJSON(t, env, http.MethodPost, "/api/matches/virtual", reporterToken, virtualMatch(winner, loser))
+			status, envelope := doJSON(t, env, http.MethodPost, "/api/matches", reporterToken, matchReport(winner, loser))
 			if status != http.StatusCreated {
 				t.Fatalf("第 %d 局 status = %d, want 201 (body=%v)", i+1, status, envelope)
 			}
@@ -438,6 +455,7 @@ func TestVirtualMatchE2E(t *testing.T) {
 	})
 
 	// 平局：103 vs 104，双方同分 → delta 均为 0，无获胜队。
+	// source=virtual 仅作来源标记，结算逻辑与 game 完全一致。
 	t.Run("draw match settles symmetrically", func(t *testing.T) {
 		body := map[string]any{
 			"match_type": "1v1",
@@ -447,19 +465,24 @@ func TestVirtualMatchE2E(t *testing.T) {
 				{"team_id": "B", "result": "draw", "initial_count": 1, "alive_count": 1,
 					"members": []map[string]any{{"uuid": "e2e-uuid-4"}}},
 			},
+			"source":      "virtual",
+			"started_at":  time.Now().UTC().Add(-10 * time.Minute).Format(time.RFC3339),
+			"finished_at": time.Now().UTC().Format(time.RFC3339),
 		}
-		status, envelope := doJSON(t, env, http.MethodPost, "/api/matches/virtual", reporterToken, body)
+		status, envelope := doJSON(t, env, http.MethodPost, "/api/matches", reporterToken, body)
 		if status != http.StatusCreated {
 			t.Fatalf("status = %d, want 201 (body=%v)", status, envelope)
 		}
 		data := dataMap(t, envelope)
-		match := data["match"].(map[string]any)
-		if match["winner_team_id"] != "" {
-			t.Errorf("winner_team_id = %v, want empty for draw", match["winner_team_id"])
+		if data["winner_team_id"] != "" {
+			t.Errorf("winner_team_id = %v, want empty for draw", data["winner_team_id"])
+		}
+		if data["source"] != "virtual" {
+			t.Errorf("source = %v, want virtual (marker only)", data["source"])
 		}
 		for uid, p := range participantsFrom(t, envelope) {
-			if p["result"] != "draw" {
-				t.Errorf("uid %d result = %v, want draw", uid, p["result"])
+			if p["is_draw"] != true {
+				t.Errorf("uid %d is_draw = %v, want true", uid, p["is_draw"])
 			}
 			if jsonInt(t, p, "rank_score_delta") != 0 {
 				t.Errorf("uid %d delta = %d, want 0 for equal-rating draw", uid, jsonInt(t, p, "rank_score_delta"))
@@ -467,9 +490,10 @@ func TestVirtualMatchE2E(t *testing.T) {
 		}
 	})
 
-	// 游戏上报路径回归：match:report 令牌的 POST /api/matches 不受影响。
-	var gameMatchID int64
-	t.Run("game report path unchanged", func(t *testing.T) {
+	// 兼容形状（winner_team + loser_teams）与 teams 形状等价结算；
+	// maintenance 令牌（OPS）同样可上报。
+	var compatMatchID int64
+	t.Run("compat shape via maintenance token", func(t *testing.T) {
 		body := map[string]any{
 			"match_type": "1v1",
 			"winner_team": map[string]any{
@@ -483,18 +507,43 @@ func TestVirtualMatchE2E(t *testing.T) {
 			"started_at":  time.Now().UTC().Add(-10 * time.Minute).Format("2006-01-02 15:04:05"),
 			"finished_at": time.Now().UTC().Format("2006-01-02 15:04:05"),
 		}
-		status, envelope := doJSON(t, env, http.MethodPost, "/api/matches", reporterToken, body)
+		status, envelope := doJSON(t, env, http.MethodPost, "/api/matches", maintenanceToken, body)
 		if status != http.StatusCreated {
 			t.Fatalf("status = %d, want 201 (body=%v)", status, envelope)
 		}
-		gameMatchID = jsonInt(t, dataMap(t, envelope), "id")
+		compatMatchID = jsonInt(t, dataMap(t, envelope), "id")
+		parts := participantsFrom(t, envelope)
+		if jsonInt(t, parts[103], "rank_score_delta") != 325 || jsonInt(t, parts[104], "rank_score_delta") != -325 {
+			t.Errorf("compat settlement = %v/%v, want +325/-325",
+				parts[103]["rank_score_delta"], parts[104]["rank_score_delta"])
+		}
 
-		status, envelope = doJSON(t, env, http.MethodGet, fmt.Sprintf("/api/matches/%d", gameMatchID), userToken(103), nil)
+		status, envelope = doJSON(t, env, http.MethodGet, fmt.Sprintf("/api/matches/%d", compatMatchID), userToken(103), nil)
 		if status != http.StatusOK {
 			t.Fatalf("status = %d, want 200 (body=%v)", status, envelope)
 		}
 		if dataMap(t, envelope)["source"] != "game" {
 			t.Errorf("source = %v, want game", dataMap(t, envelope)["source"])
+		}
+	})
+
+	// 自相矛盾的上报以类型化错误拒绝。
+	t.Run("inconsistent reports rejected", func(t *testing.T) {
+		// 结束早于开始。
+		body := matchReport("e2e-uuid-1", "e2e-uuid-2")
+		body["finished_at"] = time.Now().UTC().Add(-20 * time.Minute).Format(time.RFC3339)
+		status, envelope := doJSON(t, env, http.MethodPost, "/api/matches", reporterToken, body)
+		if status != http.StatusBadRequest || envelope["code"] != "mca_report_inconsistent" {
+			t.Fatalf("finished<started status/code = %d/%v, want 400/mca_report_inconsistent", status, envelope["code"])
+		}
+
+		// 两支获胜队伍。
+		body = matchReport("e2e-uuid-1", "e2e-uuid-2")
+		teams := body["teams"].([]map[string]any)
+		teams[1]["result"] = "win"
+		status, envelope = doJSON(t, env, http.MethodPost, "/api/matches", reporterToken, body)
+		if status != http.StatusBadRequest || envelope["code"] != "mca_report_inconsistent" {
+			t.Fatalf("two winners status/code = %d/%v, want 400/mca_report_inconsistent", status, envelope["code"])
 		}
 	})
 
@@ -521,12 +570,39 @@ func TestVirtualMatchE2E(t *testing.T) {
 		}
 	})
 
-	// 匹配闭环：入队 → 引擎成局 → 成局记录可查。
+	// 入队→主动离开（此时 1v1 队列为空，不会被引擎抢先成局）。
+	t.Run("join then leave", func(t *testing.T) {
+		status, _ := doJSON(t, env, http.MethodPost, "/api/matchmaking/join", userToken(103), map[string]any{"match_type": "1v1"})
+		if status != http.StatusCreated {
+			t.Fatalf("join status = %d, want 201", status)
+		}
+		status, envelope := doJSON(t, env, http.MethodDelete, "/api/matchmaking/leave", userToken(103), nil)
+		if status != http.StatusOK {
+			t.Fatalf("leave status = %d, want 200 (body=%v)", status, envelope)
+		}
+		status, envelope = doJSON(t, env, http.MethodGet, "/api/matchmaking/status", userToken(103), nil)
+		if status != http.StatusOK || dataMap(t, envelope)["in_queue"] != false {
+			t.Fatalf("离开后状态异常: %d %v", status, envelope)
+		}
+	})
+
+	// 未知模式 → 400。
+	t.Run("unknown mode rejected", func(t *testing.T) {
+		status, envelope := doJSON(t, env, http.MethodPost, "/api/matchmaking/join", userToken(103), map[string]any{"match_type": "4v4"})
+		if status != http.StatusBadRequest || envelope["code"] != "mca_invalid_request" {
+			t.Fatalf("status/code = %d/%v, want 400/mca_invalid_request", status, envelope["code"])
+		}
+	})
+
+	// 单人匹配闭环：入队 → 引擎成局 → 成局记录可查。
 	// 用 0 分的 105/106（分差在基础窗口内，首个 tick 即成局）。
 	t.Run("matchmaking forms a group", func(t *testing.T) {
 		status, envelope := doJSON(t, env, http.MethodPost, "/api/matchmaking/join", userToken(105), map[string]any{"match_type": "1v1"})
 		if status != http.StatusCreated {
 			t.Fatalf("join 105 status = %d, want 201 (body=%v)", status, envelope)
+		}
+		if entries := dataArray(t, envelope); len(entries) != 1 {
+			t.Fatalf("solo join entries = %d, want 1", len(entries))
 		}
 		status, envelope = doJSON(t, env, http.MethodPost, "/api/matchmaking/join", userToken(106), map[string]any{"match_type": "1v1"})
 		if status != http.StatusCreated {
@@ -594,27 +670,250 @@ func TestVirtualMatchE2E(t *testing.T) {
 		}
 	})
 
-	// 入队→主动离开。
-	t.Run("join then leave", func(t *testing.T) {
-		status, _ := doJSON(t, env, http.MethodPost, "/api/matchmaking/join", userToken(103), map[string]any{"match_type": "1v1"})
+	// game_id 幂等：同一 game_id 重复上报不重复结算（200 重放），
+	// 载荷冲突 → 409。
+	t.Run("game_id idempotency", func(t *testing.T) {
+		body := matchReport("e2e-uuid-5", "e2e-uuid-6")
+		body["game_id"] = "e2e-game-1"
+		body["server_id"] = "e2e-server-1"
+
+		status, envelope := doJSON(t, env, http.MethodPost, "/api/matches", reporterToken, body)
 		if status != http.StatusCreated {
-			t.Fatalf("join status = %d, want 201", status)
+			t.Fatalf("首次上报 status = %d, want 201 (body=%v)", status, envelope)
 		}
-		status, envelope := doJSON(t, env, http.MethodDelete, "/api/matchmaking/leave", userToken(103), nil)
+		first := dataMap(t, envelope)
+		matchID := jsonInt(t, first, "id")
+		if first["game_id"] != "e2e-game-1" || first["server_id"] != "e2e-server-1" {
+			t.Errorf("game_id/server_id = %v/%v, want e2e-game-1/e2e-server-1", first["game_id"], first["server_id"])
+		}
+		scoreAfterFirst := jsonInt(t, getUserProfile(t, env, 105), "rank_score")
+		if scoreAfterFirst != 325 {
+			t.Fatalf("105 rank_score = %d, want 325 after first report", scoreAfterFirst)
+		}
+
+		// 完全相同的载荷重复上报 → 200 重放，同一记录，绝不重复结算。
+		status, envelope = doJSON(t, env, http.MethodPost, "/api/matches", reporterToken, body)
 		if status != http.StatusOK {
-			t.Fatalf("leave status = %d, want 200 (body=%v)", status, envelope)
+			t.Fatalf("重放 status = %d, want 200 (body=%v)", status, envelope)
 		}
-		status, envelope = doJSON(t, env, http.MethodGet, "/api/matchmaking/status", userToken(103), nil)
-		if status != http.StatusOK || dataMap(t, envelope)["in_queue"] != false {
-			t.Fatalf("离开后状态异常: %d %v", status, envelope)
+		if id := jsonInt(t, dataMap(t, envelope), "id"); id != matchID {
+			t.Errorf("重放返回 id = %d, want %d（既有记录）", id, matchID)
+		}
+		if score := jsonInt(t, getUserProfile(t, env, 105), "rank_score"); score != scoreAfterFirst {
+			t.Errorf("重放后 105 rank_score = %d, want %d（不得重复结算）", score, scoreAfterFirst)
+		}
+
+		// 同一 game_id、不同载荷 → 409 冲突。
+		conflict := matchReport("e2e-uuid-6", "e2e-uuid-5")
+		conflict["game_id"] = "e2e-game-1"
+		status, envelope = doJSON(t, env, http.MethodPost, "/api/matches", reporterToken, conflict)
+		if status != http.StatusConflict || envelope["code"] != "mca_game_id_conflict" {
+			t.Fatalf("冲突 status/code = %d/%v, want 409/mca_game_id_conflict", status, envelope["code"])
 		}
 	})
 
-	// 未知模式 → 400。
-	t.Run("unknown mode rejected", func(t *testing.T) {
-		status, envelope := doJSON(t, env, http.MethodPost, "/api/matchmaking/join", userToken(103), map[string]any{"match_type": "4v4"})
-		if status != http.StatusBadRequest || envelope["code"] != "mca_invalid_request" {
-			t.Fatalf("status/code = %d/%v, want 400/mca_invalid_request", status, envelope["code"])
+	// 组队匹配：建队 → 加入 → 以队入队 → 成局（同队同 party 不拆分）→
+	// 成局后 party 清理 → 队伍共享结算。
+	t.Run("party matchmaking end to end", func(t *testing.T) {
+		// 建队：107 带领 108；109 带领 110。
+		status, envelope := doJSON(t, env, http.MethodPost, "/api/matchmaking/party", userToken(107), map[string]any{"match_type": "2v2"})
+		if status != http.StatusCreated {
+			t.Fatalf("create party status = %d, want 201 (body=%v)", status, envelope)
+		}
+		party1 := jsonInt(t, dataMap(t, envelope), "id")
+		status, envelope = doJSON(t, env, http.MethodPost, fmt.Sprintf("/api/matchmaking/party/%d/join", party1), userToken(108), nil)
+		if status != http.StatusOK {
+			t.Fatalf("join party status = %d, want 200 (body=%v)", status, envelope)
+		}
+		if members, _ := dataMap(t, envelope)["members"].([]any); len(members) != 2 {
+			t.Fatalf("party1 members = %v, want 2", dataMap(t, envelope)["members"])
+		}
+
+		status, envelope = doJSON(t, env, http.MethodPost, "/api/matchmaking/party", userToken(109), map[string]any{"match_type": "2v2"})
+		if status != http.StatusCreated {
+			t.Fatalf("create party2 status = %d, want 201 (body=%v)", status, envelope)
+		}
+		party2 := jsonInt(t, dataMap(t, envelope), "id")
+		status, _ = doJSON(t, env, http.MethodPost, fmt.Sprintf("/api/matchmaking/party/%d/join", party2), userToken(110), nil)
+		if status != http.StatusOK {
+			t.Fatalf("join party2 status = %d, want 200", status)
+		}
+
+		// 已在队伍中不能再建队。
+		status, envelope = doJSON(t, env, http.MethodPost, "/api/matchmaking/party", userToken(108), map[string]any{"match_type": "2v2"})
+		if status != http.StatusConflict || envelope["code"] != "mca_party_already_in_party" {
+			t.Fatalf("重复建队 status/code = %d/%v, want 409/mca_party_already_in_party", status, envelope["code"])
+		}
+
+		// 非队长不能带领队伍排队。
+		status, envelope = doJSON(t, env, http.MethodPost, "/api/matchmaking/join", userToken(108),
+			map[string]any{"match_type": "2v2", "party_id": party1})
+		if status != http.StatusForbidden || envelope["code"] != "mca_not_party_leader" {
+			t.Fatalf("非队长带队 status/code = %d/%v, want 403/mca_not_party_leader", status, envelope["code"])
+		}
+
+		// 在队伍中的用户不能单人排队。
+		status, envelope = doJSON(t, env, http.MethodPost, "/api/matchmaking/join", userToken(110),
+			map[string]any{"match_type": "2v2"})
+		if status != http.StatusConflict || envelope["code"] != "mca_party_already_in_party" {
+			t.Fatalf("队员单人排队 status/code = %d/%v, want 409/mca_party_already_in_party", status, envelope["code"])
+		}
+
+		// 两位队长依次带整队入队。
+		status, envelope = doJSON(t, env, http.MethodPost, "/api/matchmaking/join", userToken(107),
+			map[string]any{"match_type": "2v2", "party_id": party1})
+		if status != http.StatusCreated {
+			t.Fatalf("party1 入队 status = %d, want 201 (body=%v)", status, envelope)
+		}
+		if entries := dataArray(t, envelope); len(entries) != 2 {
+			t.Fatalf("party1 入队条目 = %d, want 2（整队）", len(entries))
+		}
+		status, envelope = doJSON(t, env, http.MethodPost, "/api/matchmaking/join", userToken(109),
+			map[string]any{"match_type": "2v2", "party_id": party2})
+		if status != http.StatusCreated {
+			t.Fatalf("party2 入队 status = %d, want 201 (body=%v)", status, envelope)
+		}
+
+		// 轮询等待引擎成局。
+		var group map[string]any
+		deadline := time.Now().Add(20 * time.Second)
+		for time.Now().Before(deadline) {
+			status, envelope := doJSON(t, env, http.MethodGet, "/api/matchmaking/status", userToken(107), nil)
+			if status != http.StatusOK {
+				t.Fatalf("status 查询失败: %d %v", status, envelope)
+			}
+			groups, _ := dataMap(t, envelope)["recent_groups"].([]any)
+			if len(groups) > 0 {
+				group = groups[0].(map[string]any)
+				break
+			}
+			time.Sleep(500 * time.Millisecond)
+		}
+		if group == nil {
+			t.Fatal("20s 内未成局")
+		}
+		groupID := jsonInt(t, group, "group_id")
+		members, _ := group["members"].([]any)
+		if len(members) != 4 {
+			t.Fatalf("成局成员 = %d, want 4", len(members))
+		}
+		teamOf := map[int64]string{}
+		partyOf := map[int64]int64{}
+		for _, m := range members {
+			mm := m.(map[string]any)
+			uid := jsonInt(t, mm, "uid")
+			teamOf[uid] = mm["team_id"].(string)
+			if pid, ok := mm["party_id"].(float64); ok {
+				partyOf[uid] = int64(pid)
+			}
+		}
+		// 同 party 成员必须同队且不被拆分。
+		if teamOf[107] != teamOf[108] || teamOf[109] != teamOf[110] {
+			t.Errorf("队伍被拆分: %v", teamOf)
+		}
+		if teamOf[107] == teamOf[109] {
+			t.Errorf("两队被装入同一队: %v", teamOf)
+		}
+		if partyOf[107] != party1 || partyOf[108] != party1 || partyOf[109] != party2 || partyOf[110] != party2 {
+			t.Errorf("成局成员 party 归属错误: %v", partyOf)
+		}
+
+		// 成局后 party 被清理。
+		status, envelope = doJSON(t, env, http.MethodGet, fmt.Sprintf("/api/matchmaking/party/%d", party1), userToken(107), nil)
+		if status != http.StatusNotFound || envelope["code"] != "mca_party_not_found" {
+			t.Fatalf("成局后 party 查询 status/code = %d/%v, want 404/mca_party_not_found", status, envelope["code"])
+		}
+
+		// 队伍共享结算：关联成局上报 2v2 结果，107/108 表现微调不同
+		//（原始 delta 341/309）→ 共享平均值 325。
+		report := map[string]any{
+			"match_type": "2v2",
+			"teams": []map[string]any{
+				{"team_id": "red", "result": "win", "initial_count": 2, "alive_count": 2,
+					"members": []map[string]any{
+						{"uuid": "e2e-uuid-7", "perf_tweak": 1.05},
+						{"uuid": "e2e-uuid-8", "perf_tweak": 0.95},
+					}},
+				{"team_id": "blue", "result": "lose", "initial_count": 2, "alive_count": 2,
+					"members": []map[string]any{
+						{"uuid": "e2e-uuid-9"},
+						{"uuid": "e2e-uuid-10"},
+					}},
+			},
+			"matchmaking_group_id": groupID,
+			"started_at":           time.Now().UTC().Add(-10 * time.Minute).Format(time.RFC3339),
+			"finished_at":          time.Now().UTC().Format(time.RFC3339),
+		}
+		status, envelope = doJSON(t, env, http.MethodPost, "/api/matches", reporterToken, report)
+		if status != http.StatusCreated {
+			t.Fatalf("共享结算上报 status = %d, want 201 (body=%v)", status, envelope)
+		}
+		parts := participantsFrom(t, envelope)
+		if jsonInt(t, parts[107], "rank_score_delta") != 325 || jsonInt(t, parts[108], "rank_score_delta") != 325 {
+			t.Errorf("party 共享 delta = %d/%d, want 325/325（原始 341/309 平均）",
+				jsonInt(t, parts[107], "rank_score_delta"), jsonInt(t, parts[108], "rank_score_delta"))
+		}
+		if jsonInt(t, parts[109], "rank_score_delta") != -325 || jsonInt(t, parts[110], "rank_score_delta") != -325 {
+			t.Errorf("败方 delta = %d/%d, want -325/-325",
+				jsonInt(t, parts[109], "rank_score_delta"), jsonInt(t, parts[110], "rank_score_delta"))
+		}
+		if score := jsonInt(t, getUserProfile(t, env, 107), "rank_score"); score != 325 {
+			t.Errorf("107 rank_score = %d, want 325", score)
+		}
+	})
+
+	// 按玩家查历史战绩：101 参与 5 局（首局 + 批量 4 局）。
+	t.Run("user match history", func(t *testing.T) {
+		status, envelope := doJSON(t, env, http.MethodGet, "/api/users/101/matches", userToken(102), nil)
+		if status != http.StatusOK {
+			t.Fatalf("status = %d, want 200 (body=%v)", status, envelope)
+		}
+		if matches := dataArray(t, envelope); len(matches) != 5 {
+			t.Fatalf("101 历史对局 = %d, want 5", len(matches))
+		}
+
+		// /api/matches/me 等价（本人视角）。
+		status, envelope = doJSON(t, env, http.MethodGet, "/api/matches/me?page_num=1&page_size=3", userToken(101), nil)
+		if status != http.StatusOK {
+			t.Fatalf("status = %d, want 200 (body=%v)", status, envelope)
+		}
+		if matches := dataArray(t, envelope); len(matches) != 3 {
+			t.Fatalf("分页 page_size=3 返回 %d 条, want 3", len(matches))
+		}
+	})
+
+	// 指标：仅 OPS 可见；含成局数、拒绝原因分布、队列深度。
+	t.Run("metrics endpoint", func(t *testing.T) {
+		status, envelope := doJSON(t, env, http.MethodGet, "/api/metrics", userToken(101), nil)
+		if status != http.StatusForbidden || envelope["code"] != "oauth_insufficient_scope" {
+			t.Fatalf("玩家查指标 status/code = %d/%v, want 403/oauth_insufficient_scope", status, envelope["code"])
+		}
+
+		status, envelope = doJSON(t, env, http.MethodGet, "/api/metrics", reporterToken, nil)
+		if status != http.StatusOK {
+			t.Fatalf("status = %d, want 200 (body=%v)", status, envelope)
+		}
+		data := dataMap(t, envelope)
+		counters, ok := data["counters"].(map[string]any)
+		if !ok {
+			t.Fatalf("counters 缺失: %v", data)
+		}
+		counterAtLeast := func(key string, min int64) {
+			t.Helper()
+			v, ok := counters[key].(float64)
+			if !ok || int64(v) < min {
+				t.Errorf("counter %s = %v, want >= %d", key, counters[key], min)
+			}
+		}
+		counterAtLeast("matches_reported_total", 8)
+		counterAtLeast("matches_reported_replay_total", 1)
+		counterAtLeast("matches_rejected_total:mca_report_inconsistent", 2)
+		counterAtLeast("matches_rejected_total:mca_game_id_conflict", 1)
+		counterAtLeast("matchmaking_groups_formed_total:1v1", 1)
+		counterAtLeast("matchmaking_groups_formed_total:2v2", 1)
+		counterAtLeast("matchmaking_parties_created_total", 2)
+		if _, ok := data["queue_depth"].(map[string]any); !ok {
+			t.Errorf("queue_depth 缺失或不是对象: %v", data["queue_depth"])
 		}
 	})
 }

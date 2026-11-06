@@ -40,6 +40,7 @@ func Register(r *gin.Engine, db *sql.DB, oauthClient *auth.Client, ver auth.Veri
 	rankingH := handler.NewRankingHandler(rankingSvc)
 	maintenanceH := handler.NewMaintenanceHandler(maintenanceSvc)
 	matchmakingH := handler.NewMatchmakingHandler(matchmakingSvc)
+	metricsH := handler.NewMetricsHandler(matchmakingSvc)
 
 	// 公开端点
 	r.GET("/api/status", func(c *gin.Context) {
@@ -98,6 +99,9 @@ func Register(r *gin.Engine, db *sql.DB, oauthClient *auth.Client, ver auth.Veri
 		api.GET("/matchmaking/party/:id", matchmakingH.GetParty)
 		api.POST("/matchmaking/party/:id/join", matchmakingH.JoinParty)
 		api.DELETE("/matchmaking/party/:id", matchmakingH.LeaveParty)
+
+		// metrics（仅 OPS 级凭据）
+		api.GET("/metrics", metricsH.Metrics)
 
 		// rankings（需要鉴权：与该组其他端点一致）
 		api.GET("/rankings/:type", rankingH.GetTop)
