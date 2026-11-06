@@ -3,6 +3,8 @@ package service
 import (
 	"context"
 	"database/sql"
+
+	"MatchCoreArena-Server/internal/apperr"
 )
 
 // Friend 好友关系模型。
@@ -15,6 +17,9 @@ type Friend struct {
 }
 
 // FriendService 好友业务接口。
+//
+// 全部方法当前未实现：返回类型化错误 mca_not_implemented（HTTP 501），
+// 而不是假数据或假成功（作者决策，见 knowledge 0010）。
 type FriendService interface {
 	// List 列出当前用户的好友（已接受）。
 	List(ctx context.Context, uid int64) ([]*Friend, error)
@@ -38,38 +43,32 @@ func NewFriendService(db *sql.DB) FriendService {
 	return &friendService{db: db}
 }
 
-// List 列出好友（骨架 stub）。
+// errFriendNotImplemented 好友功能未实现的统一类型化错误。
+func errFriendNotImplemented(op string) error {
+	return apperr.New(apperr.CodeMCANotImplemented, "好友功能未实现: "+op)
+}
+
+// List 列出好友（未实现）。
 func (s *friendService) List(ctx context.Context, uid int64) ([]*Friend, error) {
-	// TODO: SELECT * FROM friends WHERE (user_uid = ? OR friend_uid = ?) AND status = 1
-	return []*Friend{}, nil
+	return nil, errFriendNotImplemented("List")
 }
 
-// Request 发起好友请求（骨架 stub）。
+// Request 发起好友请求（未实现）。
 func (s *friendService) Request(ctx context.Context, requesterUID, targetUID int64) (*Friend, error) {
-	// TODO: INSERT INTO friends (user_uid, friend_uid, status) VALUES (?, ?, 0)
-	return &Friend{
-		ID:        1,
-		UserUID:   requesterUID,
-		FriendUID: targetUID,
-		Status:    0,
-		CreatedAt: "2026-09-11T00:00:00Z",
-	}, nil
+	return nil, errFriendNotImplemented("Request")
 }
 
-// Accept 接受好友请求（骨架 stub）。
+// Accept 接受好友请求（未实现）。
 func (s *friendService) Accept(ctx context.Context, uid, friendID int64) error {
-	// TODO: UPDATE friends SET status = 1 WHERE id = ? AND (user_uid = ? OR friend_uid = ?)
-	return nil
+	return errFriendNotImplemented("Accept")
 }
 
-// Reject 拒绝好友请求（骨架 stub）。
+// Reject 拒绝好友请求（未实现）。
 func (s *friendService) Reject(ctx context.Context, uid, friendID int64) error {
-	// TODO: UPDATE friends SET status = 2 WHERE id = ? AND (user_uid = ? OR friend_uid = ?)
-	return nil
+	return errFriendNotImplemented("Reject")
 }
 
-// Delete 删除好友（骨架 stub）。
+// Delete 删除好友（未实现）。
 func (s *friendService) Delete(ctx context.Context, uid, friendID int64) error {
-	// TODO: DELETE FROM friends WHERE id = ? AND (user_uid = ? OR friend_uid = ?)
-	return nil
+	return errFriendNotImplemented("Delete")
 }

@@ -39,6 +39,7 @@ const (
 	CodeMCAMatchNotFound       Code = "mca_match_not_found"
 	CodeMCAQueueAlreadyJoined  Code = "mca_queue_already_joined"
 	CodeMCAQueueNotJoined      Code = "mca_queue_not_joined"
+	CodeMCANotImplemented      Code = "mca_not_implemented"
 )
 
 // codeHTTPMap 将错误码映射到建议 HTTP 状态码。
@@ -65,6 +66,7 @@ var codeHTTPMap = map[Code]int{
 	CodeMCAMatchNotFound:       http.StatusNotFound,
 	CodeMCAQueueAlreadyJoined:  http.StatusConflict,
 	CodeMCAQueueNotJoined:      http.StatusNotFound,
+	CodeMCANotImplemented:      http.StatusNotImplemented,
 }
 
 // StatusFromCode 根据错误码返回建议 HTTP 状态码，未注册的码返回 500。

@@ -20,6 +20,7 @@ with HA-Contract, fix the entry, not the contract.
 | [0007](0007-report-path-alignment-and-pending-design-decisions.md) | Report-Path Schema Alignment and Pending Design Decisions | Accepted | `matches.winner_uid`/`loser_uid` kept with `DEFAULT 0` for production column compatibility, streaks read from `match_participants.is_winner`; design-level issues listed as pending author decisions. |
 | [0008](0008-ecosystem-boundary-hrpauth-only-outbound-dependency.md) | Ecosystem Boundary: HRPAuth Is the Only Outbound Runtime Dependency | Accepted | MCA calls only HRPAuth (/status, /oauth/*, /user*, /services/users/{uuid}); no Yggdrasil, WinnerProxy, or skin-service references in code; inbound consumers are BedwarsRel-MCA, the client, and the maintenance view. |
 | [0009](0009-virtual-matches-and-matchmaking.md) | Virtual Matches and Matchmaking Are First-Class Server Features | Accepted | `POST /api/matches/virtual` settles injected match data (win/lose/draw) through the same rating plumbing as game reports, and a background matchmaking engine queues users and forms rating-windowed matches persisted to MySQL. |
+| [0010](0010-friend-and-team-endpoints-are-explicitly-unimplemented.md) | Friend and Team Endpoints Are Explicitly Unimplemented | Accepted | All friend/team service methods answer typed `mca_not_implemented` (HTTP 501) instead of fake successes or empty fake data; routes, auth and reserved error codes stay in place for a future implementation. |
 
 ## Maintenance
 
