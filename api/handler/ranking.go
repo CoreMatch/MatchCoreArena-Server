@@ -6,6 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"MatchCoreArena-Server/api/middleware"
+	"MatchCoreArena-Server/config"
 	"MatchCoreArena-Server/internal/apperr"
 	"MatchCoreArena-Server/internal/response"
 	"MatchCoreArena-Server/internal/service"
@@ -13,12 +14,14 @@ import (
 
 // RankingHandler 排行榜 HTTP handler。
 type RankingHandler struct {
-	svc service.RankingService
+	svc   service.RankingService
+	tiers []config.RankTier
 }
 
-// NewRankingHandler 创建 RankingHandler。
-func NewRankingHandler(svc service.RankingService) *RankingHandler {
-	return &RankingHandler{svc: svc}
+// NewRankingHandler 创建 RankingHandler。tiers 为段位阶梯展示配置
+//（可为空：端点返回空数组，前端不显示进度条）。
+func NewRankingHandler(svc service.RankingService, tiers []config.RankTier) *RankingHandler {
+	return &RankingHandler{svc: svc, tiers: tiers}
 }
 
 // GetTop GET /api/rankings/:type
@@ -67,4 +70,15 @@ func (h *RankingHandler) GetMyRank(c *gin.Context) {
 		return
 	}
 	response.OK(c, "获取我的排名成功", ranking)
+}
+
+// Tiers GET /api/rankings/tiers
+// 段位阶梯展示配置（纯展示：不参与结算、不引入赛季）。未配置时返回
+// 空数组，前端据此不显示进度条。
+func (h *RankingHandler) Tiers(c *gin.Context) {
+	tiers := h.tiers
+	if tiers == nil {
+		tiers = []config.RankTier{}
+	}
+	response.OK(c, "获取段位阶梯成功", tiers)
 }

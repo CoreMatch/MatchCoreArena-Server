@@ -37,7 +37,7 @@ func Register(r *gin.Engine, db *sql.DB, oauthClient *auth.Client, ver auth.Veri
 	friendH := handler.NewFriendHandler(friendSvc, oauthClient, rdb)
 	teamH := handler.NewTeamHandler(teamSvc)
 	matchH := handler.NewMatchHandler(matchSvc)
-	rankingH := handler.NewRankingHandler(rankingSvc)
+	rankingH := handler.NewRankingHandler(rankingSvc, appCfg.Ranking.Tiers)
 	maintenanceH := handler.NewMaintenanceHandler(maintenanceSvc)
 	matchmakingH := handler.NewMatchmakingHandler(matchmakingSvc)
 	metricsH := handler.NewMetricsHandler(matchmakingSvc)
@@ -105,6 +105,7 @@ func Register(r *gin.Engine, db *sql.DB, oauthClient *auth.Client, ver auth.Veri
 		// rankings（需要鉴权：与该组其他端点一致）
 		api.GET("/rankings/:type", rankingH.GetTop)
 		api.GET("/rankings/me", rankingH.GetMyRank)
+		api.GET("/rankings/tiers", rankingH.Tiers)
 
 		// maintenance
 		api.POST("/maintenance/sql", maintenanceH.ExecuteSQL)

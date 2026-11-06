@@ -1,7 +1,7 @@
 # MatchCoreArena-Server 应用配置模板
 # 复制为 config.yaml 后按需修改；版本变更由 config 包自动迁移。
 
-version: "1.8.0"
+version: "1.9.0"
 
 server:
   host: "0.0.0.0"
@@ -67,3 +67,14 @@ matchmaking:
   join_target:
     host: ""
     port: 0
+
+# 排行榜展示配置（纯展示：不参与结算、不引入赛季）。
+ranking:
+  # 段位阶梯（名称 + 分数下限），供前端展示进度条；留空时前端不显示。
+  tiers: []
+  # 示例：
+  # tiers:
+  #   - name: "青铜"
+  #     min_score: 0
+  #   - name: "白银"
+  #     min_score: 1000

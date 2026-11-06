@@ -345,6 +345,126 @@ matchmaking:
 	})
 }
 
+// TestLoad_Migrates180To190 覆盖 1.8.0 → 1.9.0 迁移：新增可空的
+// ranking.tiers（段位阶梯，纯展示）；旧配置无该块时为空阶梯。
+func TestLoad_Migrates180To190(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+
+	configContent := `version: "1.8.0"
+server:
+  host: "127.0.0.1"
+  port: 9178
+database:
+  host: "localhost"
+  port: 3306
+  user: "u"
+  password: "p"
+  name: "d"
+redis:
+  host: "localhost"
+  port: 6379
+auth:
+  hrpauth:
+    base_url: "http://localhost:2778"
+  maintenance_token: "t"
+matchmaking:
+  enabled: true
+  tick_seconds: 1
+  queue_timeout_seconds: 300
+  base_rating_window: 200
+  rating_window_growth_per_minute: 100
+  max_rating_window: 1000
+  modes:
+    - match_type: "1v1"
+      team_sizes: [1, 1]
+`
+	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+		t.Fatalf("写入测试配置文件失败: %v", err)
+	}
+
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("1.8.0 配置应能迁移加载: %v", err)
+	}
+	if cfg.Version != CurrentVersion {
+		t.Errorf("版本号不匹配: 期望 %s, 实际 %s", CurrentVersion, cfg.Version)
+	}
+	if len(cfg.Ranking.Tiers) != 0 {
+		t.Errorf("未配置 tiers 时应为空阶梯, 实际 %+v", cfg.Ranking.Tiers)
+	}
+}
+
+// TestLoad_RankingTiers 覆盖 ranking.tiers 的解析与校验。
+func TestLoad_RankingTiers(t *testing.T) {
+	base := `version: "1.9.0"
+server:
+  host: "127.0.0.1"
+  port: 9178
+database:
+  host: "localhost"
+  port: 3306
+  user: "u"
+  password: "p"
+  name: "d"
+redis:
+  host: "localhost"
+  port: 6379
+auth:
+  hrpauth:
+    base_url: "http://localhost:2778"
+  maintenance_token: "t"
+matchmaking:
+  enabled: true
+  tick_seconds: 1
+  queue_timeout_seconds: 300
+  base_rating_window: 200
+  rating_window_growth_per_minute: 100
+  max_rating_window: 1000
+  modes:
+    - match_type: "1v1"
+      team_sizes: [1, 1]
+`
+	t.Run("tiers parsed in order", func(t *testing.T) {
+		configPath := filepath.Join(t.TempDir(), "config.yaml")
+		content := base + "ranking:\n  tiers:\n    - name: \"青铜\"\n      min_score: 0\n    - name: \"白银\"\n      min_score: 1000\n"
+		if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := Load(configPath)
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if len(cfg.Ranking.Tiers) != 2 ||
+			cfg.Ranking.Tiers[0].Name != "青铜" || cfg.Ranking.Tiers[0].MinScore != 0 ||
+			cfg.Ranking.Tiers[1].Name != "白银" || cfg.Ranking.Tiers[1].MinScore != 1000 {
+			t.Errorf("tiers = %+v, want 青铜(0) 白银(1000)", cfg.Ranking.Tiers)
+		}
+	})
+
+	t.Run("empty tier name rejected", func(t *testing.T) {
+		configPath := filepath.Join(t.TempDir(), "config.yaml")
+		content := base + "ranking:\n  tiers:\n    - name: \"\"\n      min_score: 0\n"
+		if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Load(configPath); err == nil {
+			t.Fatal("空 tier 名称应报错")
+		}
+	})
+
+	t.Run("negative min_score rejected", func(t *testing.T) {
+		configPath := filepath.Join(t.TempDir(), "config.yaml")
+		content := base + "ranking:\n  tiers:\n    - name: \"青铜\"\n      min_score: -1\n"
+		if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Load(configPath); err == nil {
+			t.Fatal("负分下限应报错")
+		}
+	})
+}
+
 func TestLoad_CreatesDirectoryIfMissing(t *testing.T) {
 	// 创建临时目录
 	tmpDir, err := os.MkdirTemp("", "config-test")

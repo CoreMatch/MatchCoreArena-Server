@@ -117,6 +117,46 @@ func TestListBadTimeFilter(t *testing.T) {
 	}
 }
 
+// TestListByUserSelfSummary 覆盖战绩列表项的本人视角摘要：本人所在
+// 队伍、胜负、分数变化（after = max(0, before+delta)）。
+func TestListByUserSelfSummary(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	svc := service.NewMatchService(db, nil, nil)
+
+	mock.ExpectQuery(`SELECT m\.id, m\.match_type, m\.source`).
+		WithArgs(int64(7), 20, 0).
+		WillReturnRows(sqlmock.NewRows(append(matchRowColumns, "team_id", "is_winner", "is_draw", "rank_score_before", "rank_score_delta")).
+			AddRow(1, "1v1", "game", "", "", "", "A", 1.0, 600,
+				"2026-11-06 10:00:00", "2026-11-06 10:10:00", "2026-11-06 10:11:00",
+				"A", true, false, 0, 325).
+			AddRow(2, "1v1", "game", "", "", "", "B", 1.0, 600,
+				"2026-11-06 11:00:00", "2026-11-06 11:10:00", "2026-11-06 11:11:00",
+				"B", false, false, 100, -325))
+
+	matches, err := svc.ListByUser(t.Context(), 7, service.Page{PageNum: 1, PageSize: 20})
+	if err != nil {
+		t.Fatalf("ListByUser: %v", err)
+	}
+	if len(matches) != 2 {
+		t.Fatalf("matches = %d, want 2", len(matches))
+	}
+	win := matches[0].SelfSummary
+	if win == nil || win.TeamID != "A" || !win.IsWinner || win.RankScoreDelta != 325 || win.RankScoreAfter != 325 {
+		t.Errorf("win self_summary = %+v, want team A winner delta 325 after 325", win)
+	}
+	lose := matches[1].SelfSummary
+	if lose == nil || lose.TeamID != "B" || lose.IsWinner || lose.RankScoreDelta != -325 || lose.RankScoreAfter != 0 {
+		t.Errorf("lose self_summary = %+v, want team B loser delta -325 after 0 (下限)", lose)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
+}
+
 // TestGetByGameID 覆盖按 game_id 查询：命中返回详情，未命中 404。
 func TestGetByGameID(t *testing.T) {
 	t.Run("found", func(t *testing.T) {

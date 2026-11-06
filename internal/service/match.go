@@ -53,6 +53,19 @@ type Match struct {
 
 	// Participants 参与者明细；GetByID 与上报响应填充，列表接口为空。
 	Participants []*ParticipantDetail `json:"participants,omitempty"`
+
+	// SelfSummary 列表项的"本人视角"摘要（仅战绩列表接口填充，
+	// 视角为列表主体玩家）；其余接口为空。
+	SelfSummary *SelfSummary `json:"self_summary,omitempty"`
+}
+
+// SelfSummary 战绩列表项的本人视角摘要：本人所在队伍、胜负与分数变化。
+type SelfSummary struct {
+	TeamID         string `json:"team_id"`
+	IsWinner       bool   `json:"is_winner"`
+	IsDraw         bool   `json:"is_draw"`
+	RankScoreDelta int    `json:"rank_score_delta"`
+	RankScoreAfter int    `json:"rank_score_after"`
 }
 
 // ParticipantDetail 对战参与者明细（含本局评分变动），随对战详情返回。
@@ -944,11 +957,13 @@ func (s *matchService) loadParticipants(ctx context.Context, matchID int64) ([]*
 	return participants, rows.Err()
 }
 
-// ListByUser 列出用户参与的对战历史（分页）。
+// ListByUser 列出用户参与的对战历史（分页）。每条附带该用户视角的
+// SelfSummary（本人所在队伍、胜负、分数变化）。
 func (s *matchService) ListByUser(ctx context.Context, uid int64, page Page) ([]*Match, error) {
 	offset := (page.PageNum - 1) * page.PageSize
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT m.id, m.match_type, m.source, m.map_name, m.server_id, m.game_id, m.winner_team_id, m.survival_rate, m.duration_seconds, m.started_at, m.finished_at, m.created_at
+		`SELECT m.id, m.match_type, m.source, m.map_name, m.server_id, m.game_id, m.winner_team_id, m.survival_rate, m.duration_seconds, m.started_at, m.finished_at, m.created_at,
+		        mp.team_id, mp.is_winner, mp.is_draw, mp.rank_score_before, mp.rank_score_delta
 		 FROM matches m
 		 JOIN match_participants mp ON m.id = mp.match_id
 		 WHERE mp.user_uid = ?
@@ -964,13 +979,21 @@ func (s *matchService) ListByUser(ctx context.Context, uid int64, page Page) ([]
 	for rows.Next() {
 		var m Match
 		var mapName, serverID, gameID, winnerTeamID sql.NullString
-		if err := rows.Scan(&m.ID, &m.MatchType, &m.Source, &mapName, &serverID, &gameID, &winnerTeamID, &m.SurvivalRate, &m.DurationSeconds, &m.StartedAt, &m.FinishedAt, &m.CreatedAt); err != nil {
+		var self SelfSummary
+		var scoreBefore int
+		if err := rows.Scan(&m.ID, &m.MatchType, &m.Source, &mapName, &serverID, &gameID, &winnerTeamID, &m.SurvivalRate, &m.DurationSeconds, &m.StartedAt, &m.FinishedAt, &m.CreatedAt,
+			&self.TeamID, &self.IsWinner, &self.IsDraw, &scoreBefore, &self.RankScoreDelta); err != nil {
 			return nil, fmt.Errorf("解析对战记录失败: %w", err)
 		}
 		m.MapName = mapName.String
 		m.ServerID = serverID.String
 		m.GameID = gameID.String
 		m.WinnerTeamID = winnerTeamID.String
+		self.RankScoreAfter = scoreBefore + self.RankScoreDelta
+		if self.RankScoreAfter < 0 {
+			self.RankScoreAfter = 0
+		}
+		m.SelfSummary = &self
 		matches = append(matches, &m)
 	}
 	return matches, nil
