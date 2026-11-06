@@ -3,6 +3,8 @@ package service
 import (
 	"context"
 	"database/sql"
+
+	"MatchCoreArena-Server/internal/apperr"
 )
 
 // Team 战队模型。
@@ -24,6 +26,9 @@ type TeamMember struct {
 }
 
 // TeamService 战队业务接口。
+//
+// 全部方法当前未实现：返回类型化错误 mca_not_implemented（HTTP 501），
+// 而不是假数据或假成功（作者决策，见 knowledge 0010）。
 type TeamService interface {
 	// Create 创建战队。
 	Create(ctx context.Context, leaderUID int64, name, description string) (*Team, error)
@@ -51,63 +56,42 @@ func NewTeamService(db *sql.DB) TeamService {
 	return &teamService{db: db}
 }
 
-// Create 创建战队（骨架 stub）。
+// errTeamNotImplemented 战队功能未实现的统一类型化错误。
+func errTeamNotImplemented(op string) error {
+	return apperr.New(apperr.CodeMCANotImplemented, "战队功能未实现: "+op)
+}
+
+// Create 创建战队（未实现）。
 func (s *teamService) Create(ctx context.Context, leaderUID int64, name, description string) (*Team, error) {
-	// TODO: INSERT INTO teams (name, description, leader_uid) VALUES (?, ?, ?)
-	// TODO: INSERT INTO team_members (team_id, user_uid, role) VALUES (?, ?, 2)
-	return &Team{
-		ID:          1,
-		Name:        name,
-		Description: description,
-		LeaderUID:   leaderUID,
-		CreatedAt:   "2026-09-11T00:00:00Z",
-	}, nil
+	return nil, errTeamNotImplemented("Create")
 }
 
-// GetByID 获取战队详情（骨架 stub）。
+// GetByID 获取战队详情（未实现）。
 func (s *teamService) GetByID(ctx context.Context, id int64) (*Team, error) {
-	// TODO: SELECT * FROM teams WHERE id = ? AND deleted_at IS NULL
-	return &Team{
-		ID:          id,
-		Name:        "stub-team",
-		Description: "stub description",
-		LeaderUID:   1,
-		CreatedAt:   "2026-09-11T00:00:00Z",
-	}, nil
+	return nil, errTeamNotImplemented("GetByID")
 }
 
-// Delete 解散战队（骨架 stub）。
+// Delete 解散战队（未实现）。
 func (s *teamService) Delete(ctx context.Context, uid, teamID int64) error {
-	// TODO: 校验 uid == leader_uid，然后 UPDATE teams SET deleted_at = NOW() WHERE id = ?
-	return nil
+	return errTeamNotImplemented("Delete")
 }
 
-// ListMembers 列出成员（骨架 stub）。
+// ListMembers 列出成员（未实现）。
 func (s *teamService) ListMembers(ctx context.Context, teamID int64) ([]*TeamMember, error) {
-	// TODO: SELECT * FROM team_members WHERE team_id = ?
-	return []*TeamMember{}, nil
+	return nil, errTeamNotImplemented("ListMembers")
 }
 
-// AddMember 添加成员（骨架 stub）。
+// AddMember 添加成员（未实现）。
 func (s *teamService) AddMember(ctx context.Context, uid, teamID, targetUID int64, role int) (*TeamMember, error) {
-	// TODO: 校验 uid 有权限（队长/副队长），然后 INSERT INTO team_members
-	return &TeamMember{
-		ID:       1,
-		TeamID:   teamID,
-		UserUID:  targetUID,
-		Role:     role,
-		JoinedAt: "2026-09-11T00:00:00Z",
-	}, nil
+	return nil, errTeamNotImplemented("AddMember")
 }
 
-// UpdateMemberRole 调整角色（骨架 stub）。
+// UpdateMemberRole 调整角色（未实现）。
 func (s *teamService) UpdateMemberRole(ctx context.Context, uid, teamID, targetUID int64, role int) error {
-	// TODO: 校验权限，UPDATE team_members SET role = ? WHERE team_id = ? AND user_uid = ?
-	return nil
+	return errTeamNotImplemented("UpdateMemberRole")
 }
 
-// RemoveMember 移除成员（骨架 stub）。
+// RemoveMember 移除成员（未实现）。
 func (s *teamService) RemoveMember(ctx context.Context, uid, teamID, targetUID int64) error {
-	// TODO: 校验权限，DELETE FROM team_members WHERE team_id = ? AND user_uid = ?
-	return nil
+	return errTeamNotImplemented("RemoveMember")
 }
