@@ -26,6 +26,7 @@ with HA-Contract, fix the entry, not the contract.
 | [0013](0013-observability-metrics-registry.md) | Observability Is an In-Process Counter Registry Exposed at /api/metrics | Accepted | A dependency-free counter registry tracks settlements, rejection reasons and queue activity; `GET /api/metrics` (OPS-only) exposes the snapshot plus live queue depth per mode. |
 | [0014](0014-ops-query-surface-matches-rejections.md) | OPS Query Surface: Global Match List, game_id Lookup and Rejection Feed | Accepted | OPS-only reads for the debug console: `GET /api/matches` (filters + pagination, detail-shaped entries), `GET /api/matches/by-game-id/{game_id}`, and a bounded sanitized feed of recent inconsistent/conflicting reports. |
 | [0015](0015-formed-matches-carry-join-target.md) | Formed Matches Carry the Game Server join_target When Configured | Accepted | Optional `matchmaking.join_target` (host/port) config; configured, every formed-group record in the matchmaking status carries `join_target` in the client interop shape; unconfigured, the field is omitted and clients fall back to local config. |
+| [0016](0016-display-additions-queue-stats-self-summary-tiers.md) | Display-Only Additions: Queue Stats, Self-View History Summary, Ranking Tiers | Accepted | Matchmaking status carries read-only `queue_stats`; history list items carry a `self_summary` for the subject player; optional `ranking.tiers` ladder served by `GET /api/rankings/tiers` — all display-only, no settlement/matchmaking/permission changes. |
 
 ## Maintenance
 
