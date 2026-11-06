@@ -38,12 +38,12 @@ func (h *RankingHandler) GetTop(c *gin.Context) {
 		season = 1
 	}
 
-	rankings, err := h.svc.GetTop(c.Request.Context(), rankType, limit, season)
+	result, err := h.svc.GetTop(c.Request.Context(), rankType, limit, season)
 	if err != nil {
 		response.Fail(c, "获取排行榜失败", err)
 		return
 	}
-	response.OK(c, "获取排行榜成功", rankings)
+	response.OK(c, "获取排行榜成功", result)
 }
 
 // GetMyRank GET /api/rankings/me?type=xxx

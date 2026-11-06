@@ -44,6 +44,7 @@ const (
 	CodeMCAGameIDConflict      Code = "mca_game_id_conflict"
 	CodeMCAPartyAlreadyInParty Code = "mca_party_already_in_party"
 	CodeMCAPartyFull           Code = "mca_party_full"
+	CodeMCARankingNotFound     Code = "mca_ranking_not_found"
 )
 
 // codeHTTPMap 将错误码映射到建议 HTTP 状态码。
@@ -75,6 +76,7 @@ var codeHTTPMap = map[Code]int{
 	CodeMCAGameIDConflict:      http.StatusConflict,
 	CodeMCAPartyAlreadyInParty: http.StatusConflict,
 	CodeMCAPartyFull:           http.StatusConflict,
+	CodeMCARankingNotFound:     http.StatusNotFound,
 }
 
 // StatusFromCode 根据错误码返回建议 HTTP 状态码，未注册的码返回 500。
