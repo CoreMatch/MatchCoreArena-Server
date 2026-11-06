@@ -41,6 +41,7 @@ type fakeMatchService struct {
 	reportCalls int
 	lastUID     int64
 	lastInput   service.TeamReportInput
+	lastFilter  service.MatchFilter
 	reportErr   error // 非 nil 时 Report 返回该错误
 	replayed    bool  // Report 第二返回值（game_id 幂等重放）
 }
@@ -59,11 +60,28 @@ func (f *fakeMatchService) GetByID(context.Context, int64) (*service.Match, erro
 	return nil, nil
 }
 
+func (f *fakeMatchService) GetByGameID(_ context.Context, gameID string) (*service.Match, error) {
+	f.lastUID = 0
+	if f.reportErr != nil {
+		return nil, f.reportErr
+	}
+	return &service.Match{ID: 44, GameID: gameID}, nil
+}
+
 func (f *fakeMatchService) ListByUser(context.Context, int64, service.Page) ([]*service.Match, error) {
 	return nil, nil
 }
 
-// newMatchRouter 装配带鉴权中间件的 POST /api/matches 路由。
+func (f *fakeMatchService) List(_ context.Context, filter service.MatchFilter, page service.Page) ([]*service.Match, error) {
+	f.lastInput = service.TeamReportInput{}
+	f.lastFilter = filter
+	if f.reportErr != nil {
+		return nil, f.reportErr
+	}
+	return []*service.Match{{ID: 45, Source: filter.Source}}, nil
+}
+
+// newMatchRouter 装配带鉴权中间件的 matches 路由（上报 + OPS 查询）。
 func newMatchRouter(v auth.Verifier, svc service.MatchService) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
@@ -72,6 +90,9 @@ func newMatchRouter(v auth.Verifier, svc service.MatchService) *gin.Engine {
 	api.Use(middleware.Auth(v))
 	h := handler.NewMatchHandler(svc)
 	api.POST("/matches", h.Report)
+	api.GET("/matches", h.List)
+	api.GET("/matches/by-game-id/:game_id", h.GetByGameID)
+	api.GET("/matches/rejections", h.Rejections)
 	return r
 }
 
@@ -310,4 +331,113 @@ func TestMatchReportProvisioningFailedMapping(t *testing.T) {
 	if svc.reportCalls != 1 {
 		t.Fatalf("expected Report to be called once, got %d", svc.reportCalls)
 	}
+}
+
+// doGet 发起带令牌的 GET 请求。
+func doGet(t *testing.T, r *gin.Engine, path, token string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, path, nil)
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	return w
+}
+
+// TestMatchOpsQueryEndpoints 覆盖三个运维查询端点的 OPS 门与装配
+//（契约 matchcorearena-business.yaml：GET /api/matches、
+// /api/matches/by-game-id/{game_id}、/api/matches/rejections）。
+func TestMatchOpsQueryEndpoints(t *testing.T) {
+	t.Run("list requires OPS credential", func(t *testing.T) {
+		svc := &fakeMatchService{}
+		r := newMatchRouter(newScopeVerifier(), svc)
+
+		w := doGet(t, r, "/api/matches?source=virtual&page_size=5", "tok-plain")
+		if w.Code != http.StatusForbidden {
+			t.Fatalf("status = %d, want 403 (body=%s)", w.Code, w.Body.String())
+		}
+		if code := assertEnvelope(t, w); code != "oauth_insufficient_scope" {
+			t.Fatalf("code = %q, want oauth_insufficient_scope", code)
+		}
+	})
+
+	t.Run("list succeeds for OPS with filters forwarded", func(t *testing.T) {
+		svc := &fakeMatchService{}
+		r := newMatchRouter(newScopeVerifier(), svc)
+
+		w := doGet(t, r, "/api/matches?source=virtual&map_name=arena-1&game_id=g-1&uid=7&finished_from=2026-11-01T00:00:00Z&finished_to=2026-11-30T00:00:00Z", "tok-report")
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200 (body=%s)", w.Code, w.Body.String())
+		}
+		want := service.MatchFilter{
+			Source: "virtual", MapName: "arena-1", GameID: "g-1", UID: 7,
+			FinishedFrom: "2026-11-01T00:00:00Z", FinishedTo: "2026-11-30T00:00:00Z",
+		}
+		if svc.lastFilter != want {
+			t.Errorf("filter = %+v, want %+v", svc.lastFilter, want)
+		}
+	})
+
+	t.Run("list also allowed for maintenance token", func(t *testing.T) {
+		svc := &fakeMatchService{}
+		r := newMatchRouter(newScopeVerifier(), svc)
+
+		w := doGet(t, r, "/api/matches", "tok-maintenance")
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200 (body=%s)", w.Code, w.Body.String())
+		}
+	})
+
+	t.Run("get by game_id requires OPS credential", func(t *testing.T) {
+		svc := &fakeMatchService{}
+		r := newMatchRouter(newScopeVerifier(), svc)
+
+		w := doGet(t, r, "/api/matches/by-game-id/g-1", "tok-report-player")
+		if w.Code != http.StatusForbidden {
+			t.Fatalf("status = %d, want 403 (body=%s)", w.Code, w.Body.String())
+		}
+	})
+
+	t.Run("get by game_id succeeds for OPS", func(t *testing.T) {
+		svc := &fakeMatchService{}
+		r := newMatchRouter(newScopeVerifier(), svc)
+
+		w := doGet(t, r, "/api/matches/by-game-id/g-1", "tok-report")
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200 (body=%s)", w.Code, w.Body.String())
+		}
+		if !strings.Contains(w.Body.String(), `"game_id":"g-1"`) {
+			t.Errorf("body must carry the match, got %s", w.Body.String())
+		}
+	})
+
+	t.Run("rejections requires OPS credential", func(t *testing.T) {
+		svc := &fakeMatchService{}
+		r := newMatchRouter(newScopeVerifier(), svc)
+
+		w := doGet(t, r, "/api/matches/rejections", "tok-plain")
+		if w.Code != http.StatusForbidden {
+			t.Fatalf("status = %d, want 403 (body=%s)", w.Code, w.Body.String())
+		}
+	})
+
+	t.Run("rejections returns array for OPS", func(t *testing.T) {
+		svc := &fakeMatchService{}
+		r := newMatchRouter(newScopeVerifier(), svc)
+
+		w := doGet(t, r, "/api/matches/rejections", "tok-report")
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200 (body=%s)", w.Code, w.Body.String())
+		}
+		var env struct {
+			Data json.RawMessage `json:"data"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &env); err != nil {
+			t.Fatalf("unmarshal: %v (body=%s)", err, w.Body.String())
+		}
+		if len(env.Data) == 0 || env.Data[0] != '[' {
+			t.Fatalf("data must be an array, got %s", env.Data)
+		}
+	})
 }

@@ -545,6 +545,17 @@ func TestMatchCoreE2E(t *testing.T) {
 		if status != http.StatusBadRequest || envelope["code"] != "mca_report_inconsistent" {
 			t.Fatalf("two winners status/code = %d/%v, want 400/mca_report_inconsistent", status, envelope["code"])
 		}
+
+		// 重复参与者 UUID（Minecraft 形态）：拒绝原因不得向调试端点泄露。
+		const dupUUID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+		body = matchReport("e2e-uuid-1", "e2e-uuid-2")
+		teams = body["teams"].([]map[string]any)
+		teams[0]["members"] = []map[string]any{{"uuid": dupUUID}}
+		teams[1]["members"] = []map[string]any{{"uuid": dupUUID}}
+		status, envelope = doJSON(t, env, http.MethodPost, "/api/matches", reporterToken, body)
+		if status != http.StatusBadRequest || envelope["code"] != "mca_report_inconsistent" {
+			t.Fatalf("duplicate uuid status/code = %d/%v, want 400/mca_report_inconsistent", status, envelope["code"])
+		}
 	})
 
 	// 排行榜：rank_type=1v1 与 users.rank_score 一致。
@@ -873,6 +884,157 @@ func TestMatchCoreE2E(t *testing.T) {
 		}
 	})
 
+	// 运维查询端点（仅 OPS）：全局对局列表（分页+过滤+倒序）、
+	// 按 game_id 查单局、拒绝记录（脱敏）。
+	t.Run("ops query endpoints", func(t *testing.T) {
+		// 玩家令牌一律 403。
+		for _, path := range []string{"/api/matches", "/api/matches/by-game-id/e2e-game-1", "/api/matches/rejections"} {
+			status, envelope := doJSON(t, env, http.MethodGet, path, userToken(101), nil)
+			if status != http.StatusForbidden || envelope["code"] != "oauth_insufficient_scope" {
+				t.Fatalf("GET %s 玩家令牌 status/code = %d/%v, want 403/oauth_insufficient_scope", path, status, envelope["code"])
+			}
+		}
+
+		// 全局列表：倒序、含参与者明细（与单局详情同形状）。
+		status, envelope := doJSON(t, env, http.MethodGet, "/api/matches?page_size=100", reporterToken, nil)
+		if status != http.StatusOK {
+			t.Fatalf("GET /api/matches status = %d, want 200 (body=%v)", status, envelope)
+		}
+		all := dataArray(t, envelope)
+		if len(all) < 8 {
+			t.Fatalf("全局对局数 = %d, want >= 8", len(all))
+		}
+		var prevFinished string
+		for i, item := range all {
+			m := item.(map[string]any)
+			finished := m["finished_at"].(string)
+			if prevFinished != "" && finished > prevFinished {
+				t.Fatalf("列表未按 finished_at 倒序: 第 %d 条 %s 晚于前一条 %s", i, finished, prevFinished)
+			}
+			prevFinished = finished
+			if i == 0 {
+				if _, ok := m["participants"].([]any); !ok {
+					t.Errorf("列表条目缺 participants（应与单局详情同形状）: %v", m)
+				}
+			}
+		}
+
+		// 过滤：source=virtual 只含平局那局。
+		status, envelope = doJSON(t, env, http.MethodGet, "/api/matches?source=virtual", reporterToken, nil)
+		if status != http.StatusOK {
+			t.Fatalf("source 过滤 status = %d (body=%v)", status, envelope)
+		}
+		virtuals := dataArray(t, envelope)
+		if len(virtuals) != 1 {
+			t.Fatalf("source=virtual 对局数 = %d, want 1", len(virtuals))
+		}
+		if virtuals[0].(map[string]any)["source"] != "virtual" {
+			t.Errorf("source 过滤结果错误: %v", virtuals[0])
+		}
+
+		// 过滤：game_id 精确。
+		status, envelope = doJSON(t, env, http.MethodGet, "/api/matches?game_id=e2e-game-1", reporterToken, nil)
+		if status != http.StatusOK {
+			t.Fatalf("game_id 过滤 status = %d (body=%v)", status, envelope)
+		}
+		byGame := dataArray(t, envelope)
+		if len(byGame) != 1 || byGame[0].(map[string]any)["game_id"] != "e2e-game-1" {
+			t.Fatalf("game_id 过滤结果 = %v, want 恰一条 e2e-game-1", byGame)
+		}
+
+		// 过滤：参与者 uid。
+		status, envelope = doJSON(t, env, http.MethodGet, "/api/matches?uid=101&page_size=100", reporterToken, nil)
+		if status != http.StatusOK {
+			t.Fatalf("uid 过滤 status = %d (body=%v)", status, envelope)
+		}
+		if n := len(dataArray(t, envelope)); n != 5 {
+			t.Fatalf("uid=101 对局数 = %d, want 5", n)
+		}
+
+		// 过滤：地图。
+		status, envelope = doJSON(t, env, http.MethodGet, "/api/matches?map_name=e2e-arena-1&page_size=100", reporterToken, nil)
+		if status != http.StatusOK {
+			t.Fatalf("map_name 过滤 status = %d (body=%v)", status, envelope)
+		}
+		if n := len(dataArray(t, envelope)); n < 6 {
+			t.Fatalf("map_name=e2e-arena-1 对局数 = %d, want >= 6", n)
+		}
+
+		// 过滤：时间区间（finished_at）。
+		status, envelope = doJSON(t, env, http.MethodGet,
+			"/api/matches?finished_from=2020-01-01T00:00:00Z&finished_to=2020-01-02T00:00:00Z", reporterToken, nil)
+		if status != http.StatusOK {
+			t.Fatalf("时间区间过滤 status = %d (body=%v)", status, envelope)
+		}
+		if n := len(dataArray(t, envelope)); n != 0 {
+			t.Fatalf("远古时间区间对局数 = %d, want 0", n)
+		}
+		status, envelope = doJSON(t, env, http.MethodGet,
+			"/api/matches?finished_from=2020-01-01T00:00:00Z&page_size=100", reporterToken, nil)
+		if status != http.StatusOK {
+			t.Fatalf("半开区间过滤 status = %d (body=%v)", status, envelope)
+		}
+		if n := len(dataArray(t, envelope)); n < 8 {
+			t.Fatalf("finished_from 远过去对局数 = %d, want >= 8", n)
+		}
+
+		// 非法时间参数 → 400。
+		status, envelope = doJSON(t, env, http.MethodGet, "/api/matches?finished_from=yesterday", reporterToken, nil)
+		if status != http.StatusBadRequest || envelope["code"] != "mca_invalid_request" {
+			t.Fatalf("非法时间参数 status/code = %d/%v, want 400/mca_invalid_request", status, envelope["code"])
+		}
+
+		// 按 game_id 查单局。
+		wantID := jsonInt(t, byGame[0].(map[string]any), "id")
+		status, envelope = doJSON(t, env, http.MethodGet, "/api/matches/by-game-id/e2e-game-1", reporterToken, nil)
+		if status != http.StatusOK {
+			t.Fatalf("by-game-id status = %d, want 200 (body=%v)", status, envelope)
+		}
+		if id := jsonInt(t, dataMap(t, envelope), "id"); id != wantID {
+			t.Errorf("by-game-id id = %d, want %d", id, wantID)
+		}
+		status, envelope = doJSON(t, env, http.MethodGet, "/api/matches/by-game-id/no-such-game", reporterToken, nil)
+		if status != http.StatusNotFound || envelope["code"] != "mca_match_not_found" {
+			t.Fatalf("by-game-id 未命中 status/code = %d/%v, want 404/mca_match_not_found", status, envelope["code"])
+		}
+
+		// 拒绝记录：含两类拒绝，冲突记录带 game_id，且不泄露玩家 UUID。
+		status, envelope = doJSON(t, env, http.MethodGet, "/api/matches/rejections", reporterToken, nil)
+		if status != http.StatusOK {
+			t.Fatalf("rejections status = %d, want 200 (body=%v)", status, envelope)
+		}
+		records := dataArray(t, envelope)
+		if len(records) < 4 {
+			t.Fatalf("拒绝记录数 = %d, want >= 4（3 矛盾 + 1 冲突）", len(records))
+		}
+		var sawInconsistent, sawConflict bool
+		for _, item := range records {
+			rec := item.(map[string]any)
+			code := rec["code"].(string)
+			reason, _ := rec["reason"].(string)
+			if strings.Contains(reason, "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee") {
+				t.Errorf("拒绝记录泄露玩家 UUID: %v", rec)
+			}
+			switch code {
+			case "mca_report_inconsistent":
+				sawInconsistent = true
+			case "mca_game_id_conflict":
+				sawConflict = true
+				if rec["game_id"] != "e2e-game-1" {
+					t.Errorf("冲突记录 game_id = %v, want e2e-game-1", rec["game_id"])
+				}
+			default:
+				t.Errorf("意外的拒绝码: %v", rec)
+			}
+			if rec["time"] == "" {
+				t.Errorf("拒绝记录缺时间: %v", rec)
+			}
+		}
+		if !sawInconsistent || !sawConflict {
+			t.Errorf("拒绝记录缺类型: inconsistent=%v conflict=%v", sawInconsistent, sawConflict)
+		}
+	})
+
 	// 指标：仅 OPS 可见；含成局数、拒绝原因分布、队列深度。
 	t.Run("metrics endpoint", func(t *testing.T) {
 		status, envelope := doJSON(t, env, http.MethodGet, "/api/metrics", userToken(101), nil)
@@ -898,7 +1060,7 @@ func TestMatchCoreE2E(t *testing.T) {
 		}
 		counterAtLeast("matches_reported_total", 8)
 		counterAtLeast("matches_reported_replay_total", 1)
-		counterAtLeast("matches_rejected_total:mca_report_inconsistent", 2)
+		counterAtLeast("matches_rejected_total:mca_report_inconsistent", 3)
 		counterAtLeast("matches_rejected_total:mca_game_id_conflict", 1)
 		counterAtLeast("matchmaking_groups_formed_total:1v1", 1)
 		counterAtLeast("matchmaking_groups_formed_total:2v2", 1)

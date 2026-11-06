@@ -9,6 +9,7 @@ import (
 	"MatchCoreArena-Server/api/middleware"
 	"MatchCoreArena-Server/internal/apperr"
 	"MatchCoreArena-Server/internal/metrics"
+	"MatchCoreArena-Server/internal/reportlog"
 	"MatchCoreArena-Server/internal/response"
 	"MatchCoreArena-Server/internal/service"
 )
@@ -61,6 +62,72 @@ func (h *MatchHandler) Report(c *gin.Context) {
 	}
 	metrics.Default.Inc(metrics.MatchesReportedTotal, 1)
 	response.Created(c, "对战结果已记录", m)
+}
+
+// List GET /api/matches
+// 全局对局查询（仅 OPS 级凭据，供运维调试台）：分页 + 过滤
+//（source、map_name、game_id 精确、uid 参与者、finished_from/finished_to
+// 时间区间），按 finished_at 倒序；条目与单局详情同形状。
+func (h *MatchHandler) List(c *gin.Context) {
+	if !middleware.GetOps(c) {
+		response.FailCode(c, apperr.CodeOAuthInsufficientScope, "全局对局查询仅对 OPS 级凭据开放")
+		return
+	}
+
+	var q struct {
+		service.MatchFilter
+		service.Page
+	}
+	if err := c.ShouldBindQuery(&q); err != nil {
+		response.FailCode(c, apperr.CodeMCAInvalidRequest, "查询参数错误: "+err.Error())
+		return
+	}
+	if q.PageNum <= 0 {
+		q.PageNum = 1
+	}
+	if q.PageSize <= 0 || q.PageSize > 100 {
+		q.PageSize = 20
+	}
+
+	matches, err := h.svc.List(c.Request.Context(), q.MatchFilter, q.Page)
+	if err != nil {
+		response.Fail(c, "查询对战列表失败", err)
+		return
+	}
+	response.OK(c, "查询对战列表成功", matches)
+}
+
+// GetByGameID GET /api/matches/by-game-id/:game_id
+// 按 game_id 查询对局（仅 OPS 级凭据），便于排查幂等重放与冲突。
+func (h *MatchHandler) GetByGameID(c *gin.Context) {
+	if !middleware.GetOps(c) {
+		response.FailCode(c, apperr.CodeOAuthInsufficientScope, "按 game_id 查询仅对 OPS 级凭据开放")
+		return
+	}
+
+	gameID := c.Param("game_id")
+	if gameID == "" {
+		response.FailCode(c, apperr.CodeMCAInvalidRequest, "game_id 不能为空")
+		return
+	}
+
+	m, err := h.svc.GetByGameID(c.Request.Context(), gameID)
+	if err != nil {
+		response.Fail(c, "按 game_id 查询对战失败", err)
+		return
+	}
+	response.OK(c, "按 game_id 查询对战成功", m)
+}
+
+// Rejections GET /api/matches/rejections
+// 最近的矛盾拒绝与 game_id 冲突记录（仅 OPS 级凭据）：有界内存环，
+// 含时间、错误码、game_id 与脱敏原因摘要（UUID 打码），不含玩家载荷字段。
+func (h *MatchHandler) Rejections(c *gin.Context) {
+	if !middleware.GetOps(c) {
+		response.FailCode(c, apperr.CodeOAuthInsufficientScope, "拒绝记录仅对 OPS 级凭据开放")
+		return
+	}
+	response.OK(c, "查询拒绝记录成功", reportlog.Default.Snapshot())
 }
 
 // GetByID GET /api/matches/:id
