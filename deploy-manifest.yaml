@@ -1,0 +1,67 @@
+# MatchCoreArena-Server 部署声明（deploy-manifest v1）
+# schema 依据：HA-Services-Deployer internal/manifest/（SchemaVersion=1）
+manifest_version: 1
+kind: service
+project: mca-server
+display_name: MatchCoreArena-Server
+group: game
+# /api/status 上报的 version 即 config.CurrentVersion "1.9.0"
+# （api/router.go 公开端点；仓库无 git 版本 tag）。
+service_version: "1.9.0"
+
+facts:
+  ports:
+    # deploy/config/mca-server.yaml.tmpl: server.host 0.0.0.0 / port 9178；
+    # compose 默认对外映射（成局客户端经 join_target 直连游戏侧，本口为 API）
+    - name: http
+      port: 9178
+      exposure: public
+  health:
+    # api/router.go r.GET("/api/status")；compose healthcheck 同路径
+    http:
+      port_name: http
+      path: /api/status
+      expect_status: 200
+      timeout_seconds: 5
+      interval_seconds: 30
+      retries: 3
+  depends_on:
+    # main.go：database/sql + redis 启动硬依赖（Ping 失败即 fatal）；
+    # auth.NewClient 启动期校验 HRPAuth 可达（knowledge 0008：唯一出站运行时
+    # 依赖），compose depends_on hrpauth: service_healthy。
+    - project: mysql
+      kind: required
+    - project: redis
+      kind: required
+    - project: hrpauth
+      kind: required
+  migration:
+    # main.go migrate.RunMigrations：版本化 schema 迁移，启动自动拿锁执行
+    # （knowledge 0017 frozen baseline v1 + additive v2）；
+    # 配置同样启动期自动迁移（1.5.0→1.9.0 内存迁移，不回写文件）。
+    mode: auto_on_startup
+  data_dirs: []
+  # 说明：持久数据全在 MySQL（knowledge 0005），本地仅 tokens.yaml 凭据文件；
+  # 其生产裸金属位置未见记录（代码默认 config/tokens.yaml，容器模板经
+  # MCA_TOKENS_PATH 指向 /app/data/tokens.yaml），故 data_dirs 留空、在回报列出。
+  config:
+    # config/config.go Load：默认路径 config/config.yaml（CONFIG_PATH 可覆盖）；
+    # 生产在位 /www/wwwroot/mca/config/config.yaml（PROD-UPGRADE §10-1）。
+    # 模板版本 = 模板首行 version: "1.9.0"（代码 CurrentVersion 同值）。
+    - path: config/config.yaml
+      template_version: "1.9.0"
+  static_assets: ""
+
+baremetal:
+  process:
+    manager: aapanel
+  install:
+    # PROD-FILEREFRESH-20261107 §1：二进制在位路径 /www/wwwroot/mca/mca
+    root: /www/wwwroot/mca
+    binary_name: mca
+  artifact:
+    source: local_path
+    local_path: /home/lnb/Desktop/HA/MatchCoreArena-Server/build/mca
+
+container:
+  enabled: false
