@@ -25,6 +25,19 @@ facts:
       timeout_seconds: 5
       interval_seconds: 30
       retries: 3
+  smoke:
+    # 部署后冒烟：/api/status 不只返回 200，还必须真的上报版本字段
+    # （api/router.go 公开端点，data.version 来自 config.CurrentVersion；
+    # api/router_test.go 对同一结构有断言）。健康探测证明活着，
+    # 这条证明服务在干活。
+    - name: status-reports-version
+      method: GET
+      path: /api/status
+      expect_status: 200
+      timeout_seconds: 10
+      assert:
+        json_field: data.version
+        json_not_empty: data.version
   depends_on:
     # main.go：database/sql + redis 启动硬依赖（Ping 失败即 fatal）；
     # auth.NewClient 启动期校验 HRPAuth 可达（knowledge 0008：唯一出站运行时
