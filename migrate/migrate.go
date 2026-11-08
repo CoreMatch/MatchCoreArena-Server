@@ -55,6 +55,7 @@ type Migration struct {
 var migrations = []Migration{
 	{Version: 1, Name: "baseline", Run: runBaseline},
 	{Version: 2, Name: "matchmaking_and_unified_reporting", Run: applyV2},
+	{Version: 3, Name: "match_assignment_link", Run: applyV3},
 }
 
 // RunMigrations 连接数据库并执行迁移，启动时调用。

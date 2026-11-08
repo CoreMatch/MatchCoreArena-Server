@@ -107,7 +107,7 @@ func TestReportWinLoseUnified(t *testing.T) {
 		WithArgs(int64(8)).
 		WillReturnRows(sqlmock.NewRows([]string{"rank_score", "wins_count"}).AddRow(0, 0))
 	mock.ExpectExec(`INSERT INTO matches`).
-		WithArgs("1v1", service.MatchSourceGame, "", "", nil, nil, "A", 1.0, 0,
+		WithArgs("1v1", service.MatchSourceGame, "", "", nil, nil, nil, "A", 1.0, 0,
 			time.Date(2026, 11, 6, 10, 0, 0, 0, time.UTC),
 			time.Date(2026, 11, 6, 10, 10, 0, 0, time.UTC)).
 		WillReturnResult(sqlmock.NewResult(1, 1))
@@ -181,7 +181,7 @@ func TestReportCompatShape(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"rank_score", "wins_count"}).AddRow(0, 0))
 	mock.ExpectExec(`INSERT INTO matches`).
 		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
-			sqlmock.AnyArg(), sqlmock.AnyArg(), "A", 1.0, 0, sqlmock.AnyArg(), sqlmock.AnyArg()).
+			sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), "A", 1.0, 0, sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	expectStreak(mock, 7)
 	expectStreak(mock, 8)
@@ -225,7 +225,7 @@ func TestReportDrawUnified(t *testing.T) {
 		WithArgs(int64(8)).
 		WillReturnRows(sqlmock.NewRows([]string{"rank_score", "wins_count"}).AddRow(1200, 12))
 	mock.ExpectExec(`INSERT INTO matches`).
-		WithArgs("1v1", service.MatchSourceGame, "", "", nil, nil, "", 0.0, 0,
+		WithArgs("1v1", service.MatchSourceGame, "", "", nil, nil, nil, "", 0.0, 0,
 			time.Date(2026, 11, 6, 10, 0, 0, 0, time.UTC),
 			time.Date(2026, 11, 6, 10, 10, 0, 0, time.UTC)).
 		WillReturnResult(sqlmock.NewResult(1, 1))
@@ -392,7 +392,7 @@ func TestReportPartySharing(t *testing.T) {
 	}
 	mock.ExpectExec(`INSERT INTO matches`).
 		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
-			sqlmock.AnyArg(), sqlmock.AnyArg(), "A", 1.0, 0, sqlmock.AnyArg(), sqlmock.AnyArg()).
+			sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), "A", 1.0, 0, sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	for _, uid := range []int64{7, 8, 9} {
 		mock.ExpectQuery(`SELECT mp\.is_winner, mp\.is_draw`).
