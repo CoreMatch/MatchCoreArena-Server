@@ -51,6 +51,9 @@ type FormedGroup struct {
 	MatchType  string        `json:"match_type"`
 	FormedAt   string        `json:"formed_at"`
 	Members    []GroupMember `json:"members"`
+	// Room 成局预占的房间标识（契约 1.10.0 房间层）：属于目标子服的
+	// 命名空间；未启用房间层或预占已失效时省略。
+	Room       string        `json:"room,omitempty"`
 	JoinTarget *JoinTarget   `json:"join_target,omitempty"`
 }
 
@@ -70,17 +73,28 @@ type MatchmakingStatus struct {
 }
 
 // MatchAssignment 玩家当前的成局分配（代理路由用，契约
-// matchcorearena-business.yaml 1.9.0）。Assigned 为 false 时其余字段
-// 全部省略；JoinTarget 沿用成局记录的下发规则（未配置则省略）。
+// matchcorearena-business.yaml 1.9.0/1.10.0）。Assigned 为 false 时其余
+// 字段全部省略（Reason 除外）；房间层下 Assigned 为 true 时 JoinTarget
+// （绑定的子服地址）与 Room 必然同时出现。JoinTarget 在无房间层的旧
+// 部署沿用成局记录的下发规则（未配置则省略）。
 // 只含路由所需的最小信息：无成员名单、无评分、无载荷。
 type MatchAssignment struct {
 	Assigned   bool        `json:"assigned"`
+	// Reason 仅在 Assigned 为 false 但存在有效成局时给出原因
+	//（目前只有 no_room_available）；普通"无分配"省略。
+	Reason     string      `json:"reason,omitempty"`
 	GroupID    int64       `json:"group_id,omitempty"`
 	MatchType  string      `json:"match_type,omitempty"`
 	FormedAt   string      `json:"formed_at,omitempty"`
 	TeamID     string      `json:"team_id,omitempty"`
+	// Room 预占的房间标识：属于目标子服的命名空间（子服侧自己的
+	// arena/游戏名），按静态清单解析。
+	Room       string      `json:"room,omitempty"`
 	JoinTarget *JoinTarget `json:"join_target,omitempty"`
 }
+
+// AssignmentReasonNoRoom 有效成局但无法提供房间（预占过期/清单变更）。
+const AssignmentReasonNoRoom = "no_room_available"
 
 // MatchmakingService 匹配业务接口。
 type MatchmakingService interface {
@@ -435,7 +449,9 @@ func (s *matchmakingService) Status(ctx context.Context, uid int64) (*Matchmakin
 		}
 		st.RecentGroups[i].Members = members
 	}
-	s.attachJoinTarget(st.RecentGroups)
+	if err := s.attachRoomsAndJoinTargets(ctx, st.RecentGroups); err != nil {
+		return nil, err
+	}
 
 	stats, err := s.queueStats(ctx)
 	if err != nil {
@@ -459,6 +475,74 @@ func (s *matchmakingService) queueStats(ctx context.Context) (QueueStats, error)
 	}
 	stats.AverageWaitSeconds = int64(math.Round(avgWait))
 	return stats, nil
+}
+
+// attachRoomsAndJoinTargets 为成局记录附加房间与游戏服务器地址：
+// 房间层启用时优先用该成局的活跃预占（子服地址取自清单、附房间名），
+// 无活跃预占（未绑定/已过期/子服移出清单）回落全局 join_target 且不带
+// 房间；未启用房间层时保持旧行为（仅全局 join_target）。
+func (s *matchmakingService) attachRoomsAndJoinTargets(ctx context.Context, groups []FormedGroup) error {
+	if !s.cfg.RoomInventoryEnabled() {
+		s.attachJoinTarget(groups)
+		return nil
+	}
+	if len(groups) == 0 {
+		return nil
+	}
+
+	bindings, err := s.activeRoomBindings(ctx, groups)
+	if err != nil {
+		return err
+	}
+	for i := range groups {
+		if b, ok := bindings[groups[i].GroupID]; ok {
+			if srv, ok := s.cfg.FindServer(b.serverName); ok {
+				groups[i].Room = b.roomName
+				groups[i].JoinTarget = &JoinTarget{Host: srv.Host, Port: srv.Port}
+				continue
+			}
+		}
+		if s.cfg.JoinTarget.Configured() {
+			groups[i].JoinTarget = &JoinTarget{Host: s.cfg.JoinTarget.Host, Port: s.cfg.JoinTarget.Port}
+		}
+	}
+	return nil
+}
+
+// roomBinding 单条活跃房间预占。
+type roomBinding struct {
+	serverName string
+	roomName   string
+}
+
+// activeRoomBindings 批量查询给定成局的活跃房间预占（group_id → 绑定）。
+func (s *matchmakingService) activeRoomBindings(ctx context.Context, groups []FormedGroup) (map[int64]roomBinding, error) {
+	placeholders := make([]string, len(groups))
+	args := make([]any, 0, len(groups)+1)
+	for i, g := range groups {
+		placeholders[i] = "?"
+		args = append(args, g.GroupID)
+	}
+	args = append(args, s.cfg.RoomReservationTTLSeconds)
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT group_id, server_name, room_name FROM matchmaking_room_bindings
+		 WHERE group_id IN (`+strings.Join(placeholders, ",")+`)
+		   AND TIMESTAMPDIFF(SECOND, reserved_at, NOW()) < ?`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("查询房间预占失败: %w", err)
+	}
+	defer rows.Close()
+
+	out := make(map[int64]roomBinding, len(groups))
+	for rows.Next() {
+		var groupID int64
+		var b roomBinding
+		if err := rows.Scan(&groupID, &b.serverName, &b.roomName); err != nil {
+			return nil, fmt.Errorf("解析房间预占失败: %w", err)
+		}
+		out[groupID] = b
+	}
+	return out, rows.Err()
 }
 
 // attachJoinTarget 为成局记录附加游戏服务器地址（仅当配置了
@@ -573,6 +657,32 @@ func (s *matchmakingService) Assignment(ctx context.Context, uuid string) (*Matc
 		FormedAt:  formedAt,
 		TeamID:    teamID,
 	}
+
+	// 房间层（契约 1.10.0）：有效分配必须能同时给出子服地址与房间，
+	// 否则如实回"无可用房间"，绝不给出过期或虚构的房间。
+	if s.cfg.RoomInventoryEnabled() {
+		var serverName, roomName string
+		err := s.db.QueryRowContext(ctx,
+			`SELECT server_name, room_name FROM matchmaking_room_bindings
+			 WHERE group_id = ? AND TIMESTAMPDIFF(SECOND, reserved_at, NOW()) < ?`,
+			groupID, s.cfg.RoomReservationTTLSeconds).
+			Scan(&serverName, &roomName)
+		if err == sql.ErrNoRows {
+			return &MatchAssignment{Assigned: false, Reason: AssignmentReasonNoRoom}, nil
+		}
+		if err != nil {
+			return nil, fmt.Errorf("查询房间预占失败: %w", err)
+		}
+		srv, ok := s.cfg.FindServer(serverName)
+		if !ok {
+			// 绑定的子服已不在清单中（配置变更）：同样如实回报。
+			return &MatchAssignment{Assigned: false, Reason: AssignmentReasonNoRoom}, nil
+		}
+		asn.Room = roomName
+		asn.JoinTarget = &JoinTarget{Host: srv.Host, Port: srv.Port}
+		return asn, nil
+	}
+
 	if s.cfg.JoinTarget.Configured() {
 		asn.JoinTarget = &JoinTarget{Host: s.cfg.JoinTarget.Host, Port: s.cfg.JoinTarget.Port}
 	}
@@ -599,6 +709,11 @@ func (s *matchmakingService) QueueDepth(ctx context.Context) (map[string]int64, 
 	}
 	return depth, rows.Err()
 }
+
+// errNoRoomAvailable 房间层下成局时无可用房间（哨兵错误）：
+// formGroups 据此停止本轮该模式的成局（玩家留在队列等待房间释放），
+// 不是故障。
+var errNoRoomAvailable = errors.New("no available room")
 
 // MatchmakingEngine 后台匹配引擎：周期性移除超时排队并按分差窗口成局。
 //
@@ -641,7 +756,7 @@ func (e *MatchmakingEngine) Start(ctx context.Context) {
 	}()
 }
 
-// Tick 执行一轮匹配：先移除超时条目，再逐模式尝试成局。
+// Tick 执行一轮匹配：先移除超时条目、释放过期房间预占，再逐模式尝试成局。
 func (e *MatchmakingEngine) Tick(ctx context.Context) error {
 	res, err := e.db.ExecContext(ctx,
 		"DELETE FROM matchmaking_queue WHERE TIMESTAMPDIFF(SECOND, enqueued_at, NOW()) >= ?",
@@ -652,6 +767,20 @@ func (e *MatchmakingEngine) Tick(ctx context.Context) error {
 	}
 	if n, err := res.RowsAffected(); err == nil && n > 0 {
 		metrics.Default.Inc(metrics.QueueTimeoutRemovedTotal, n)
+	}
+	// 房间层：释放超过 TTL 未被结算消费的预占（数据库侧计时，
+	// 与引擎其余时序同口径）。
+	if e.cfg.RoomInventoryEnabled() {
+		relRes, err := e.db.ExecContext(ctx,
+			"DELETE FROM matchmaking_room_bindings WHERE TIMESTAMPDIFF(SECOND, reserved_at, NOW()) >= ?",
+			e.cfg.RoomReservationTTLSeconds,
+		)
+		if err != nil {
+			return fmt.Errorf("释放过期房间预占失败: %w", err)
+		}
+		if n, err := relRes.RowsAffected(); err == nil && n > 0 {
+			metrics.Default.Inc(metrics.RoomsExpiredTotal, n)
+		}
 	}
 	for _, mode := range e.cfg.Modes {
 		if err := e.formGroups(ctx, mode); err != nil {
@@ -749,6 +878,12 @@ func (e *MatchmakingEngine) formGroups(ctx context.Context, mode config.MatchMod
 		}
 
 		if err := e.commitGroup(ctx, mode, selected); err != nil {
+			if errors.Is(err, errNoRoomAvailable) {
+				// 无可用房间：本轮停止该模式成局，玩家留在队列，
+				// 等待预占被结算或 TTL 释放后下一轮再试。
+				metrics.Default.Inc(metrics.RoomlessFormationsBlocked, 1)
+				return nil
+			}
 			return err
 		}
 	}
@@ -876,11 +1011,51 @@ func (e *MatchmakingEngine) commitGroup(ctx context.Context, mode config.MatchMo
 		}
 	}
 
+	// 房间层（契约 1.10.0，决策 3C）：成局即预占一个房间。
+	// 无房可占则整局回滚（队列行随之恢复），玩家留待下轮。
+	if e.cfg.RoomInventoryEnabled() {
+		if err := e.reserveRoom(ctx, tx, groupID, mode); err != nil {
+			return err
+		}
+	}
+
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("提交事务失败: %w", err)
 	}
 	metrics.Default.Inc(metrics.GroupsFormedPrefix+mode.MatchType, 1)
 	return nil
+}
+
+// reserveRoom 在成局事务内为 group 从静态清单预占一个空闲房间。
+//
+// 按清单顺序取第一个"容量够且无活跃绑定"的房间；(server_name,
+// room_name) 主键从结构上保证并发下同一房间只能被一个 group 抢到
+//（竞争失败者得 1062，继续尝试下一间）。全部房间不可用则返回
+// errNoRoomAvailable。过期但未及清理的绑定按"已占"对待，至多延迟
+// 一个 tick 释放，不影响正确性。
+func (e *MatchmakingEngine) reserveRoom(ctx context.Context, tx *sql.Tx, groupID int64, mode config.MatchMode) error {
+	need := mode.TotalPlayers()
+	for _, srv := range e.cfg.Servers {
+		for _, room := range srv.Rooms {
+			if room.Capacity < need {
+				continue
+			}
+			_, err := tx.ExecContext(ctx,
+				"INSERT INTO matchmaking_room_bindings (server_name, room_name, group_id) VALUES (?, ?, ?)",
+				srv.Name, room.Name, groupID,
+			)
+			if err == nil {
+				metrics.Default.Inc(metrics.RoomsReservedTotal, 1)
+				return nil
+			}
+			var me *gomysql.MySQLError
+			if errors.As(err, &me) && me.Number == 1062 {
+				continue // 房间已被占（含并发刚被占），尝试下一间
+			}
+			return fmt.Errorf("预占房间失败: %w", err)
+		}
+	}
+	return errNoRoomAvailable
 }
 
 func maxInt64(a, b int64) int64 {

@@ -616,3 +616,181 @@ matchmaking:
 		t.Fatal("assignment_ttl_seconds = 0 应拒绝加载")
 	}
 }
+
+// TestLoad_Migrates1100To1110 覆盖 1.10.0 → 1.11.0：缺
+// room_reservation_ttl_seconds 注入默认 900；servers 缺省保持不启用。
+func TestLoad_Migrates1100To1110(t *testing.T) {
+	base := `version: "1.10.0"
+server:
+  host: "127.0.0.1"
+  port: 9178
+database:
+  host: "localhost"
+  port: 3306
+  user: "u"
+  password: "p"
+  name: "d"
+redis:
+  host: "localhost"
+  port: 6379
+auth:
+  hrpauth:
+    base_url: "http://localhost:2778"
+  maintenance_token: "t"
+matchmaking:
+  enabled: true
+  tick_seconds: 1
+  queue_timeout_seconds: 300
+  base_rating_window: 200
+  rating_window_growth_per_minute: 100
+  max_rating_window: 1000
+  assignment_ttl_seconds: 1800
+  modes:
+    - match_type: "1v1"
+      team_sizes: [1, 1]
+`
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "config.yaml")
+	if err := os.WriteFile(path, []byte(base), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("1.10.0 配置应能迁移加载: %v", err)
+	}
+	if cfg.Version != CurrentVersion {
+		t.Errorf("版本号不匹配: 期望 %s, 实际 %s", CurrentVersion, cfg.Version)
+	}
+	if cfg.Matchmaking.RoomReservationTTLSeconds != 900 {
+		t.Errorf("room_reservation_ttl_seconds = %d, want 900（迁移默认值）",
+			cfg.Matchmaking.RoomReservationTTLSeconds)
+	}
+	if cfg.Matchmaking.RoomInventoryEnabled() {
+		t.Error("servers 缺省应不启用房间层")
+	}
+}
+
+// TestLoad_RoomInventoryValidation 覆盖房间清单的启动校验：
+// 合法清单通过；空清单/重复子服/重复房间/空房间列表/非法地址一律拒绝。
+func TestLoad_RoomInventoryValidation(t *testing.T) {
+	base := `version: "1.11.0"
+server:
+  host: "127.0.0.1"
+  port: 9178
+database:
+  host: "localhost"
+  port: 3306
+  user: "u"
+  password: "p"
+  name: "d"
+redis:
+  host: "localhost"
+  port: 6379
+auth:
+  hrpauth:
+    base_url: "http://localhost:2778"
+  maintenance_token: "t"
+matchmaking:
+  enabled: true
+  tick_seconds: 1
+  queue_timeout_seconds: 300
+  base_rating_window: 200
+  rating_window_growth_per_minute: 100
+  max_rating_window: 1000
+  assignment_ttl_seconds: 1800
+  room_reservation_ttl_seconds: 900
+  modes:
+    - match_type: "1v1"
+      team_sizes: [1, 1]
+`
+	load := func(t *testing.T, serversYaml string) (*AppConfig, error) {
+		t.Helper()
+		path := filepath.Join(t.TempDir(), "config.yaml")
+		if err := os.WriteFile(path, []byte(base+serversYaml), 0644); err != nil {
+			t.Fatal(err)
+		}
+		return Load(path)
+	}
+
+	t.Run("valid inventory accepted", func(t *testing.T) {
+		cfg, err := load(t, `  servers:
+    - name: "sub-1"
+      host: "10.0.0.1"
+      port: 25501
+      rooms:
+        - name: "room-a"
+          capacity: 2
+        - name: "room-b"
+          capacity: 4
+`)
+		if err != nil {
+			t.Fatalf("合法清单应能加载: %v", err)
+		}
+		if !cfg.Matchmaking.RoomInventoryEnabled() || len(cfg.Matchmaking.Servers) != 1 {
+			t.Fatalf("清单解析异常: %+v", cfg.Matchmaking.Servers)
+		}
+		if len(cfg.Matchmaking.Servers[0].Rooms) != 2 {
+			t.Fatalf("房间解析异常: %+v", cfg.Matchmaking.Servers[0].Rooms)
+		}
+	})
+
+	t.Run("rejections", func(t *testing.T) {
+		cases := map[string]string{
+			"显式空清单": `  servers: []
+`,
+			"子服名为空": `  servers:
+    - name: ""
+      host: "10.0.0.1"
+      port: 25501
+      rooms: [{name: "r", capacity: 2}]
+`,
+			"子服名重复": `  servers:
+    - name: "sub-1"
+      host: "10.0.0.1"
+      port: 25501
+      rooms: [{name: "r", capacity: 2}]
+    - name: "sub-1"
+      host: "10.0.0.2"
+      port: 25501
+      rooms: [{name: "r", capacity: 2}]
+`,
+			"地址为空": `  servers:
+    - name: "sub-1"
+      host: ""
+      port: 25501
+      rooms: [{name: "r", capacity: 2}]
+`,
+			"端口非法": `  servers:
+    - name: "sub-1"
+      host: "10.0.0.1"
+      port: 70000
+      rooms: [{name: "r", capacity: 2}]
+`,
+			"房间列表为空": `  servers:
+    - name: "sub-1"
+      host: "10.0.0.1"
+      port: 25501
+      rooms: []
+`,
+			"房间名重复": `  servers:
+    - name: "sub-1"
+      host: "10.0.0.1"
+      port: 25501
+      rooms:
+        - {name: "r", capacity: 2}
+        - {name: "r", capacity: 4}
+`,
+			"容量非正": `  servers:
+    - name: "sub-1"
+      host: "10.0.0.1"
+      port: 25501
+      rooms: [{name: "r", capacity: 0}]
+`,
+		}
+		for name, yaml := range cases {
+			if _, err := load(t, yaml); err == nil {
+				t.Errorf("%s: 应拒绝启动", name)
+			}
+		}
+	})
+}
