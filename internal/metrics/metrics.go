@@ -10,14 +10,18 @@ import (
 
 // 常用计数器键前缀。
 const (
-	MatchesReportedTotal      = "matches_reported_total"
+	MatchesReportedTotal       = "matches_reported_total"
 	MatchesReportedReplayTotal = "matches_reported_replay_total"
-	MatchesRejectedPrefix     = "matches_rejected_total:"
-	GroupsFormedPrefix        = "matchmaking_groups_formed_total:"
-	MatchmakingJoinTotal      = "matchmaking_join_total"
-	MatchmakingLeaveTotal     = "matchmaking_leave_total"
-	QueueTimeoutRemovedTotal  = "matchmaking_queue_timeout_removed_total"
-	PartiesCreatedTotal       = "matchmaking_parties_created_total"
+	MatchesRejectedPrefix      = "matches_rejected_total:"
+	GroupsFormedPrefix         = "matchmaking_groups_formed_total:"
+	MatchmakingJoinTotal       = "matchmaking_join_total"
+	MatchmakingLeaveTotal      = "matchmaking_leave_total"
+	QueueTimeoutRemovedTotal   = "matchmaking_queue_timeout_removed_total"
+	PartiesCreatedTotal        = "matchmaking_parties_created_total"
+	RoomsReservedTotal         = "matchmaking_rooms_reserved_total"
+	RoomsExpiredTotal          = "matchmaking_rooms_expired_total"
+	RoomsReleasedSettledTotal  = "matchmaking_rooms_released_settled_total"
+	RoomlessFormationsBlocked  = "matchmaking_roomless_formations_blocked_total"
 )
 
 // Registry 并发安全的计数器集合。

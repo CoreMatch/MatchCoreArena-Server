@@ -27,7 +27,7 @@ import (
 //  1. 将 CurrentVersion 提升到新版本；
 //  2. 在 migrations 列表中追加对应的迁移函数；
 //  3. 在 config.example.yaml 中同步更新。
-const CurrentVersion = "1.10.0"
+const CurrentVersion = "1.11.0"
 
 // AppConfig 应用配置根结构。
 type AppConfig struct {
@@ -57,6 +57,10 @@ type RankTier struct {
 // 引擎以 TickSeconds 为周期扫描 matchmaking_queue，按分差窗口贪心成局；
 // 窗口随等待时长线性放宽（BaseRatingWindow + 每分钟增长，封顶 MaxRatingWindow），
 // 超过 QueueTimeoutSeconds 未成局的记录被移除。
+//
+// 房间层（契约 1.10.0）：Servers 为子服与房间的静态清单。配置后成局
+// 即预占一个房间（逻辑占位 + TTL），分配响应携带"子服地址 + 房间"；
+// 清单缺省（未配置）时保持 1.9.x 行为：成局不预占房间、无 room 字段。
 type MatchmakingConfig struct {
 	Enabled                     bool             `yaml:"enabled"`
 	TickSeconds                 int              `yaml:"tick_seconds"`
@@ -67,9 +71,45 @@ type MatchmakingConfig struct {
 	// AssignmentTTLSeconds 成局分配有效期（秒，契约 1.9.0 的代理路由端点
 	// GET /api/matchmaking/assignment/{uuid} 用）：formed_at 距今超过该值
 	// 的成局不再视为有效分配。
-	AssignmentTTLSeconds int                `yaml:"assignment_ttl_seconds"`
-	Modes                []MatchMode        `yaml:"modes"`
-	JoinTarget           JoinTargetConfig   `yaml:"join_target"`
+	AssignmentTTLSeconds int `yaml:"assignment_ttl_seconds"`
+	// RoomReservationTTLSeconds 房间预占有效期（秒，契约 1.10.0）：
+	// 成局预占的房间超过该值未被结算消费即释放（引擎每轮清理）。
+	RoomReservationTTLSeconds int `yaml:"room_reservation_ttl_seconds"`
+	// Servers 子服→房间静态清单。nil（未配置）= 不启用房间层，
+	// 显式空列表视为非法配置拒绝启动。
+	Servers    []MatchServer      `yaml:"servers,omitempty"`
+	Modes      []MatchMode        `yaml:"modes"`
+	JoinTarget JoinTargetConfig   `yaml:"join_target"`
+}
+
+// MatchServer 房间清单中的一个子服：名称、地址与其名下房间列表。
+// 房间名属于该子服的命名空间（即子服侧自己的 arena/游戏名）。
+type MatchServer struct {
+	Name  string     `yaml:"name"`
+	Host  string     `yaml:"host"`
+	Port  int        `yaml:"port"`
+	Rooms []RoomSpec `yaml:"rooms"`
+}
+
+// RoomSpec 单个房间：名称 + 容量（可容纳的总人数）。
+type RoomSpec struct {
+	Name     string `yaml:"name"`
+	Capacity int    `yaml:"capacity"`
+}
+
+// RoomInventoryEnabled 是否启用房间层（清单非空）。
+func (c MatchmakingConfig) RoomInventoryEnabled() bool {
+	return len(c.Servers) > 0
+}
+
+// FindServer 按名称查找清单中的子服。
+func (c MatchmakingConfig) FindServer(name string) (MatchServer, bool) {
+	for _, s := range c.Servers {
+		if s.Name == name {
+			return s, true
+		}
+	}
+	return MatchServer{}, false
 }
 
 // JoinTargetConfig 成局后下发给客户端的游戏服务器地址（交接链路用）。
@@ -357,6 +397,22 @@ var migrations = []migration{
 			return in, nil
 		},
 	},
+	{
+		from: "1.10.0",
+		to:   "1.11.0",
+		run: func(in rawConfig) (rawConfig, error) {
+			// 新增 matchmaking.room_reservation_ttl_seconds（房间预占
+			// TTL，契约 1.10.0 房间层）。缺省注入默认值 900s。
+			// matchmaking.servers（子服→房间静态清单）缺省即"未配置"：
+			// 房间层不启用，保持 1.9.x 行为，无需写入默认值。
+			if mm, ok := in["matchmaking"].(map[string]any); ok {
+				if _, ok := mm["room_reservation_ttl_seconds"]; !ok {
+					mm["room_reservation_ttl_seconds"] = 900
+				}
+			}
+			return in, nil
+		},
+	},
 }
 
 // Load 从指定路径加载配置文件，并完成版本校验/迁移，最终反序列化为 AppConfig。
@@ -495,6 +551,46 @@ func validate(cfg *AppConfig) error {
 	if mm.AssignmentTTLSeconds <= 0 {
 		return errors.New("matchmaking.assignment_ttl_seconds 必须为正数")
 	}
+	if mm.RoomReservationTTLSeconds <= 0 {
+		return errors.New("matchmaking.room_reservation_ttl_seconds 必须为正数")
+	}
+	// 房间清单校验（1.11.0 / 契约 1.10.0）：缺省 = 不启用房间层；
+	// 显式配置则逐项强校验，任一项非法直接拒绝启动。
+	if mm.Servers != nil && len(mm.Servers) == 0 {
+		return errors.New("matchmaking.servers 显式为空清单：要么整体不配置（不启用房间层），要么至少给出一个子服")
+	}
+	seenServer := make(map[string]bool, len(mm.Servers))
+	for i, srv := range mm.Servers {
+		if srv.Name == "" {
+			return fmt.Errorf("matchmaking.servers[%d].name 必填", i)
+		}
+		if seenServer[srv.Name] {
+			return fmt.Errorf("matchmaking.servers 中子服名重复: %s", srv.Name)
+		}
+		seenServer[srv.Name] = true
+		if srv.Host == "" {
+			return fmt.Errorf("matchmaking.servers[%s].host 必填（地址非法）", srv.Name)
+		}
+		if srv.Port <= 0 || srv.Port > 65535 {
+			return fmt.Errorf("matchmaking.servers[%s].port 非法: %d（必须在 1-65535）", srv.Name, srv.Port)
+		}
+		if len(srv.Rooms) == 0 {
+			return fmt.Errorf("matchmaking.servers[%s].rooms 为空清单：每个子服必须至少一个房间", srv.Name)
+		}
+		seenRoom := make(map[string]bool, len(srv.Rooms))
+		for j, room := range srv.Rooms {
+			if room.Name == "" {
+				return fmt.Errorf("matchmaking.servers[%s].rooms[%d].name 必填", srv.Name, j)
+			}
+			if seenRoom[room.Name] {
+				return fmt.Errorf("matchmaking.servers[%s] 中房间名重复: %s", srv.Name, room.Name)
+			}
+			seenRoom[room.Name] = true
+			if room.Capacity <= 0 {
+				return fmt.Errorf("matchmaking.servers[%s].rooms[%s].capacity 必须为正数", srv.Name, room.Name)
+			}
+		}
+	}
 	seen := make(map[string]bool, len(mm.Modes))
 	for _, mode := range mm.Modes {
 		if mode.MatchType == "" {
@@ -589,6 +685,7 @@ func createDefaultConfig(path string) error {
 			RatingWindowGrowthPerMinute: 100,
 			MaxRatingWindow:             1000,
 			AssignmentTTLSeconds:        1800,
+			RoomReservationTTLSeconds:   900,
 			Modes: []MatchMode{
 				{MatchType: "1v1", TeamSizes: []int{1, 1}},
 				{MatchType: "2v2", TeamSizes: []int{2, 2}},

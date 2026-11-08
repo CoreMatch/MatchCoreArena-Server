@@ -407,6 +407,10 @@ func TestReportPartySharing(t *testing.T) {
 		WithArgs(int64(99)).
 		WillReturnRows(sqlmock.NewRows([]string{"user_uid", "party_id"}).
 			AddRow(7, 5).AddRow(8, 5))
+	// 结算即消费：释放该成局的房间预占（无绑定时影响行数 0）。
+	mock.ExpectExec(`DELETE FROM matchmaking_room_bindings WHERE group_id = \?`).
+		WithArgs(int64(99)).
+		WillReturnResult(sqlmock.NewResult(0, 1))
 	// 共享后：7 与 8 均为 325；败方 9 为 -325。
 	expectPlayerWrites(mock, 7, 325)
 	expectPlayerWrites(mock, 8, 325)

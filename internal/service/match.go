@@ -17,6 +17,7 @@ import (
 
 	"MatchCoreArena-Server/internal/apperr"
 	"MatchCoreArena-Server/internal/auth"
+	"MatchCoreArena-Server/internal/metrics"
 	"MatchCoreArena-Server/internal/rating"
 	"MatchCoreArena-Server/internal/reportlog"
 )
@@ -623,11 +624,19 @@ func (s *matchService) Report(ctx context.Context, reporterUID int64, in TeamRep
 	}
 
 	// 5. 队伍（party）共享结算：关联匹配成局时，同一 party 的成员共享
-	// 平均后的积分变动。
+	// 平均后的积分变动；同时释放该成局的房间预占（契约 1.10.0：
+	// 结算即消费，沿用"已结算即消费"语义）。
+	var roomsReleased int64
 	if in.MatchmakingGroupID > 0 {
 		if err := s.applyPartySharing(ctx, tx, in.MatchmakingGroupID, settles); err != nil {
 			return nil, false, err
 		}
+		relRes, err := tx.ExecContext(ctx,
+			"DELETE FROM matchmaking_room_bindings WHERE group_id = ?", in.MatchmakingGroupID)
+		if err != nil {
+			return nil, false, fmt.Errorf("释放房间预占失败: %w", err)
+		}
+		roomsReleased, _ = relRes.RowsAffected()
 	}
 
 	// 6. 应用积分变动并写入参与者明细/排行榜。
@@ -668,6 +677,9 @@ func (s *matchService) Report(ctx context.Context, reporterUID int64, in TeamRep
 
 	if err := tx.Commit(); err != nil {
 		return nil, false, fmt.Errorf("提交事务失败: %w", err)
+	}
+	if roomsReleased > 0 {
+		metrics.Default.Inc(metrics.RoomsReleasedSettledTotal, roomsReleased)
 	}
 
 	return &Match{

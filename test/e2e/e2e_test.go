@@ -45,7 +45,8 @@ const (
 
 // uuid→uid 映射（HRPAuth stub 解析用）。
 // 101/102 评分结算与批量；103/104 平局与兼容形状；105/106 单人匹配
-// 与 game_id 幂等；107-110 组队匹配（全部 0 分起步，分差在基础窗口内）。
+// 与 game_id 幂等；107-110 组队匹配；111-114 房间预占竞争
+//（全部 0 分起步，分差在基础窗口内）。
 var e2eUsers = map[string]int64{
 	"e2e-uuid-1":  101,
 	"e2e-uuid-2":  102,
@@ -57,6 +58,14 @@ var e2eUsers = map[string]int64{
 	"e2e-uuid-8":  108,
 	"e2e-uuid-9":  109,
 	"e2e-uuid-10": 110,
+	"e2e-uuid-11": 111,
+	"e2e-uuid-12": 112,
+	"e2e-uuid-13": 113,
+	"e2e-uuid-14": 114,
+	"e2e-uuid-15": 115,
+	"e2e-uuid-16": 116,
+	"e2e-uuid-17": 117,
+	"e2e-uuid-18": 118,
 }
 
 // userToken 返回 uid 对应的玩家令牌（stub /user 识别）。
@@ -215,6 +224,14 @@ func setupEnv(t *testing.T) *e2eEnv {
 			},
 			AssignmentTTLSeconds: 1800,
 			JoinTarget:           config.JoinTargetConfig{Host: "e2e-game.example.com", Port: 25565},
+			RoomReservationTTLSeconds: 1800,
+			Servers: []config.MatchServer{
+				{Name: "e2e-sub-1", Host: "10.99.0.1", Port: 25501, Rooms: []config.RoomSpec{
+					{Name: "e2e-room-2a", Capacity: 2},
+					{Name: "e2e-room-2b", Capacity: 2},
+					{Name: "e2e-room-4", Capacity: 4},
+				}},
+			},
 		},
 		Ranking: config.RankingConfig{
 			Tiers: []config.RankTier{
@@ -692,13 +709,17 @@ func TestMatchCoreE2E(t *testing.T) {
 			t.Errorf("成局成员 = %v, want 105 与 106", uids)
 		}
 
-		// 成局记录携带游戏服务器地址（交接链路，与客户端 join_target 同形）。
+		// 成局记录携带房间与清单子服地址（契约 1.10.0 房间层：
+		// 1v1 取第一间容量足够的空闲房 e2e-room-2a）。
+		if group["room"] != "e2e-room-2a" {
+			t.Errorf("成局 room = %v, want e2e-room-2a", group["room"])
+		}
 		jt, ok := group["join_target"].(map[string]any)
 		if !ok {
 			t.Fatalf("成局记录缺 join_target: %v", group)
 		}
-		if jt["host"] != "e2e-game.example.com" || jsonInt(t, jt, "port") != 25565 {
-			t.Errorf("join_target = %v, want e2e-game.example.com:25565", jt)
+		if jt["host"] != "10.99.0.1" || jsonInt(t, jt, "port") != 25501 {
+			t.Errorf("join_target = %v, want 清单子服地址 10.99.0.1:25501", jt)
 		}
 
 		// 成局后双方均已出队。
@@ -926,7 +947,8 @@ func TestMatchCoreE2E(t *testing.T) {
 			t.Fatalf("玩家令牌 status/code = %d/%v, want 403/oauth_insufficient_scope", status, envelope["code"])
 		}
 
-		// OPS 凭据查询有效分配（105 的 1v1 成局未结算、未过期）。
+		// OPS 凭据查询有效分配（105 的 1v1 成局未结算、未过期；
+		// 房间层下携带房间与清单子服地址）。
 		status, envelope = doJSON(t, env, http.MethodGet, "/api/matchmaking/assignment/e2e-uuid-5", reporterToken, nil)
 		if status != http.StatusOK {
 			t.Fatalf("assignment status = %d, want 200 (body=%v)", status, envelope)
@@ -938,12 +960,15 @@ func TestMatchCoreE2E(t *testing.T) {
 		if asn["match_type"] != "1v1" || asn["team_id"] == "" {
 			t.Errorf("assignment = %v, want match_type 1v1 且带 team_id", asn)
 		}
+		if asn["room"] != "e2e-room-2a" {
+			t.Errorf("assignment room = %v, want e2e-room-2a", asn["room"])
+		}
 		jt, ok := asn["join_target"].(map[string]any)
 		if !ok {
 			t.Fatalf("assignment 缺 join_target: %v", asn)
 		}
-		if jt["host"] != "e2e-game.example.com" || jsonInt(t, jt, "port") != 25565 {
-			t.Errorf("join_target = %v, want e2e-game.example.com:25565", jt)
+		if jt["host"] != "10.99.0.1" || jsonInt(t, jt, "port") != 25501 {
+			t.Errorf("join_target = %v, want 清单子服地址 10.99.0.1:25501", jt)
 		}
 
 		// 已被结算消费的成局（2v2 共享结算上报携带 matchmaking_group_id）。
@@ -962,6 +987,128 @@ func TestMatchCoreE2E(t *testing.T) {
 		}
 		if asn = dataMap(t, envelope); asn["assigned"] != false {
 			t.Fatalf("未知 UUID assigned = %v, want false", asn["assigned"])
+		}
+	})
+
+	// 房间预占（契约 1.10.0，决策 3C/4B）：四队 2v2 竞争唯一的 4 人房
+	// e2e-room-4 —— 第一局（两队互搏）预占成局，剩余两队无法再成局
+	// 只能留队等待；首局带 group id 结算释放后，等待两队预占同一房间成局。
+	t.Run("room reservation contention and settlement release", func(t *testing.T) {
+		parties := [][]string{
+			{"e2e-uuid-11", "e2e-uuid-12"},
+			{"e2e-uuid-13", "e2e-uuid-14"},
+			{"e2e-uuid-15", "e2e-uuid-16"},
+			{"e2e-uuid-17", "e2e-uuid-18"},
+		}
+		leaders := []int64{111, 113, 115, 117}
+		for i, roster := range parties {
+			status, envelope := doJSON(t, env, http.MethodPost, "/api/matchmaking/join", userToken(leaders[i]),
+				map[string]any{"match_type": "2v2", "party_members": roster})
+			if status != http.StatusCreated {
+				t.Fatalf("队伍%d入队 status = %d, want 201 (body=%v)", i+1, status, envelope)
+			}
+		}
+
+		// uid→uuid 反查（结算上报按成局实际队伍构造）。
+		uuidOf := map[int64]string{}
+		for uuid, uid := range e2eUsers {
+			uuidOf[uid] = uuid
+		}
+
+		// 轮询直到"恰有两队成局（一局）、另两队仍在队列"。
+		latestGroup := func(uid int64) (map[string]any, bool) {
+			status, envelope := doJSON(t, env, http.MethodGet, "/api/matchmaking/status", userToken(uid), nil)
+			if status != http.StatusOK {
+				t.Fatalf("status 查询失败: %d %v", status, envelope)
+			}
+			data := dataMap(t, envelope)
+			groups, _ := data["recent_groups"].([]any)
+			if len(groups) == 0 {
+				return nil, data["in_queue"] == true
+			}
+			return groups[0].(map[string]any), false
+		}
+		var formedLeader, waitingLeader int64
+		deadline := time.Now().Add(20 * time.Second)
+		for time.Now().Before(deadline) {
+			g1, inQ1 := latestGroup(111)
+			g2, inQ2 := latestGroup(115)
+			if g1 != nil && g2 != nil {
+				t.Fatalf("两局同时成立：同一房间不得被两个 group 预占\n%v\n%v", g1, g2)
+			}
+			if g1 != nil && inQ2 {
+				formedLeader, waitingLeader = 111, 115
+				break
+			}
+			if g2 != nil && inQ1 {
+				formedLeader, waitingLeader = 115, 111
+				break
+			}
+			time.Sleep(500 * time.Millisecond)
+		}
+		if formedLeader == 0 {
+			t.Fatal("20s 内未出现'一局成立、另两队等待'的状态")
+		}
+
+		// 成立局的房间必须是唯一的 4 人房，且四名成员分属两队。
+		formed, _ := latestGroup(formedLeader)
+		if formed["room"] != "e2e-room-4" {
+			t.Fatalf("成局 room = %v, want e2e-room-4（唯一容量>=4 的房间）", formed["room"])
+		}
+		groupID := jsonInt(t, formed, "group_id")
+		members, _ := formed["members"].([]any)
+		if len(members) != 4 {
+			t.Fatalf("成局成员 = %d, want 4", len(members))
+		}
+		teamUUIDs := map[string][]string{}
+		for _, m := range members {
+			mm := m.(map[string]any)
+			tid := mm["team_id"].(string)
+			teamUUIDs[tid] = append(teamUUIDs[tid], uuidOf[jsonInt(t, mm, "uid")])
+		}
+
+		// 结算即释放：上报携带 matchmaking_group_id（按实际队伍构造胜负）。
+		var winTeam, loseTeam []string
+		for tid, uuids := range teamUUIDs {
+			if winTeam == nil {
+				winTeam = uuids
+				_ = tid
+			} else {
+				loseTeam = uuids
+			}
+		}
+		report := map[string]any{
+			"match_type": "2v2",
+			"teams": []map[string]any{
+				{"team_id": "red", "result": "win", "initial_count": 2, "alive_count": 2,
+					"members": []map[string]any{{"uuid": winTeam[0]}, {"uuid": winTeam[1]}}},
+				{"team_id": "blue", "result": "lose", "initial_count": 2, "alive_count": 2,
+					"members": []map[string]any{{"uuid": loseTeam[0]}, {"uuid": loseTeam[1]}}},
+			},
+			"matchmaking_group_id": groupID,
+			"started_at":           time.Now().UTC().Add(-10 * time.Minute).Format(time.RFC3339),
+			"finished_at":          time.Now().UTC().Format(time.RFC3339),
+		}
+		status, envelope := doJSON(t, env, http.MethodPost, "/api/matches", reporterToken, report)
+		if status != http.StatusCreated {
+			t.Fatalf("结算上报 status = %d, want 201 (body=%v)", status, envelope)
+		}
+
+		// 释放后等待两队预占同一房间成局（房间复用）。
+		var second map[string]any
+		deadline = time.Now().Add(20 * time.Second)
+		for time.Now().Before(deadline) {
+			if g, _ := latestGroup(waitingLeader); g != nil {
+				second = g
+				break
+			}
+			time.Sleep(500 * time.Millisecond)
+		}
+		if second == nil {
+			t.Fatal("释放后 20s 内等待两队未成局")
+		}
+		if second["room"] != "e2e-room-4" {
+			t.Errorf("复用房间 room = %v, want e2e-room-4（结算释放后再预占）", second["room"])
 		}
 	})
 
