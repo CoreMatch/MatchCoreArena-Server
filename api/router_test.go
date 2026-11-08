@@ -55,6 +55,66 @@ func TestStatusEndpoint(t *testing.T) {
 	}
 }
 
+// TestStatusCORSEndToEnd 覆盖 /api/status 的收紧 CORS（契约
+// matchcorearena-business.yaml 1.8.0）：白名单命中回显 Origin，未命中
+// 不回显，预检 204 带方法/头，其余路由不挂 CORS。
+func TestStatusCORSEndToEnd(t *testing.T) {
+	r := newTestRouter(t)
+
+	// 白名单命中：回显 Origin + Vary。
+	req := httptest.NewRequest(http.MethodGet, "/api/status", nil)
+	req.Header.Set("Origin", "https://mcnb.dev")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	if got := w.Header().Get("Access-Control-Allow-Origin"); got != "https://mcnb.dev" {
+		t.Fatalf("Access-Control-Allow-Origin = %q, want https://mcnb.dev", got)
+	}
+
+	// 未命中：照常 200 但不回显 Origin。
+	req = httptest.NewRequest(http.MethodGet, "/api/status", nil)
+	req.Header.Set("Origin", "https://evil.example")
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	if got := w.Header().Get("Access-Control-Allow-Origin"); got != "" {
+		t.Fatalf("Access-Control-Allow-Origin = %q, want 空（未命中不得回显）", got)
+	}
+
+	// 预检：204 + 方法/头。
+	req = httptest.NewRequest(http.MethodOptions, "/api/status", nil)
+	req.Header.Set("Origin", "https://www.mcnb.dev")
+	req.Header.Set("Access-Control-Request-Method", http.MethodGet)
+	req.Header.Set("Access-Control-Request-Headers", "Content-Type")
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("preflight status = %d, want 204", w.Code)
+	}
+	if got := w.Header().Get("Access-Control-Allow-Origin"); got != "https://www.mcnb.dev" {
+		t.Fatalf("preflight Access-Control-Allow-Origin = %q, want https://www.mcnb.dev", got)
+	}
+	if got := w.Header().Get("Access-Control-Allow-Methods"); got != http.MethodGet {
+		t.Fatalf("preflight Access-Control-Allow-Methods = %q, want GET", got)
+	}
+	if got := w.Header().Get("Access-Control-Allow-Headers"); got != "Content-Type" {
+		t.Fatalf("preflight Access-Control-Allow-Headers = %q, want Content-Type", got)
+	}
+
+	// CORS 只挂 /api/status：鉴权路由不得带 CORS 头。
+	req = httptest.NewRequest(http.MethodGet, "/api/users/me", nil)
+	req.Header.Set("Origin", "https://mcnb.dev")
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if got := w.Header().Get("Access-Control-Allow-Origin"); got != "" {
+		t.Fatalf("/api/users/me Access-Control-Allow-Origin = %q, want 空（CORS 仅限 /api/status）", got)
+	}
+}
+
 // TestProtectedEndpointsRequireBearer covers the auth gate error path: a
 // protected route without a token answers 401 oauth_login_required.
 func TestProtectedEndpointsRequireBearer(t *testing.T) {
