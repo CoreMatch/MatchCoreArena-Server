@@ -486,10 +486,16 @@ func (s *matchService) Report(ctx context.Context, reporterUID int64, in TeamRep
 	if in.GameID != "" {
 		gameIDArg, hashArg = in.GameID, hash
 	}
+	// matchmaking_group_id 携带时落库（成局是否已结算的判定依据，
+	// 契约 1.9.0 的代理路由端点用）；未携带写 NULL，既有行为不变。
+	var groupIDArg any
+	if in.MatchmakingGroupID > 0 {
+		groupIDArg = in.MatchmakingGroupID
+	}
 	res, err := tx.ExecContext(ctx,
-		`INSERT INTO matches (match_type, source, map_name, server_id, game_id, payload_hash, winner_team_id, survival_rate, duration_seconds, started_at, finished_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		in.MatchType, source, in.MapName, in.ServerID, gameIDArg, hashArg, winnerTeamID, survivalRate,
+		`INSERT INTO matches (match_type, source, map_name, server_id, game_id, payload_hash, matchmaking_group_id, winner_team_id, survival_rate, duration_seconds, started_at, finished_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		in.MatchType, source, in.MapName, in.ServerID, gameIDArg, hashArg, groupIDArg, winnerTeamID, survivalRate,
 		in.DurationSeconds, startedAt, finishedAt,
 	)
 	if err != nil {

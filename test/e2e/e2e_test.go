@@ -213,7 +213,8 @@ func setupEnv(t *testing.T) *e2eEnv {
 				{MatchType: "1v1", TeamSizes: []int{1, 1}},
 				{MatchType: "2v2", TeamSizes: []int{2, 2}},
 			},
-			JoinTarget: config.JoinTargetConfig{Host: "e2e-game.example.com", Port: 25565},
+			AssignmentTTLSeconds: 1800,
+			JoinTarget:           config.JoinTargetConfig{Host: "e2e-game.example.com", Port: 25565},
 		},
 		Ranking: config.RankingConfig{
 			Tiers: []config.RankTier{
@@ -911,6 +912,53 @@ func TestMatchCoreE2E(t *testing.T) {
 		status, envelope = doJSON(t, env, http.MethodGet, "/api/matchmaking/status", userToken(107), nil)
 		if status != http.StatusOK || dataMap(t, envelope)["in_queue"] != false {
 			t.Fatalf("整队离队后 107 仍在队列: %d %v", status, envelope)
+		}
+	})
+
+	// 成局分配查询（契约 1.9.0，代理路由用）：105/106 的 1v1 成局未被
+	// 结算引用（幂等子测试的上报未携带 matchmaking_group_id）→ 有效；
+	// 107 的 2v2 成局已被共享结算上报引用 → 已消费。玩家令牌 403，
+	// 未知 UUID 404。
+	t.Run("assignment query for proxy routing", func(t *testing.T) {
+		// 玩家令牌被拒（即使带 scope 也只认 OPS 凭据）。
+		status, envelope := doJSON(t, env, http.MethodGet, "/api/matchmaking/assignment/e2e-uuid-5", userToken(105), nil)
+		if status != http.StatusForbidden || envelope["code"] != "oauth_insufficient_scope" {
+			t.Fatalf("玩家令牌 status/code = %d/%v, want 403/oauth_insufficient_scope", status, envelope["code"])
+		}
+
+		// OPS 凭据查询有效分配（105 的 1v1 成局未结算、未过期）。
+		status, envelope = doJSON(t, env, http.MethodGet, "/api/matchmaking/assignment/e2e-uuid-5", reporterToken, nil)
+		if status != http.StatusOK {
+			t.Fatalf("assignment status = %d, want 200 (body=%v)", status, envelope)
+		}
+		asn := dataMap(t, envelope)
+		if asn["assigned"] != true {
+			t.Fatalf("assigned = %v, want true（成局未结算未过期）", asn["assigned"])
+		}
+		if asn["match_type"] != "1v1" || asn["team_id"] == "" {
+			t.Errorf("assignment = %v, want match_type 1v1 且带 team_id", asn)
+		}
+		jt, ok := asn["join_target"].(map[string]any)
+		if !ok {
+			t.Fatalf("assignment 缺 join_target: %v", asn)
+		}
+		if jt["host"] != "e2e-game.example.com" || jsonInt(t, jt, "port") != 25565 {
+			t.Errorf("join_target = %v, want e2e-game.example.com:25565", jt)
+		}
+
+		// 已被结算消费的成局（2v2 共享结算上报携带 matchmaking_group_id）。
+		status, envelope = doJSON(t, env, http.MethodGet, "/api/matchmaking/assignment/e2e-uuid-7", reporterToken, nil)
+		if status != http.StatusOK {
+			t.Fatalf("assignment status = %d, want 200 (body=%v)", status, envelope)
+		}
+		if asn = dataMap(t, envelope); asn["assigned"] != false {
+			t.Fatalf("assigned = %v, want false（成局已被结算消费）", asn["assigned"])
+		}
+
+		// 未知 UUID → 404 mca_user_not_found。
+		status, envelope = doJSON(t, env, http.MethodGet, "/api/matchmaking/assignment/e2e-uuid-unknown", reporterToken, nil)
+		if status != http.StatusNotFound || envelope["code"] != "mca_user_not_found" {
+			t.Fatalf("未知 UUID status/code = %d/%v, want 404/mca_user_not_found", status, envelope["code"])
 		}
 	})
 

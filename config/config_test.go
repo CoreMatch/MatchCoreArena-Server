@@ -545,3 +545,74 @@ auth:
 		t.Errorf("tokens_path should default to empty, got %q", cfg2.Auth.TokensPath)
 	}
 }
+
+// TestLoad_Migrates190To1100 覆盖 1.9.0 → 1.10.0：旧配置缺
+// assignment_ttl_seconds 时注入默认 1800；显式值保留；非法值拒绝。
+func TestLoad_Migrates190To1100(t *testing.T) {
+	base := `version: "1.9.0"
+server:
+  host: "127.0.0.1"
+  port: 9178
+database:
+  host: "localhost"
+  port: 3306
+  user: "u"
+  password: "p"
+  name: "d"
+redis:
+  host: "localhost"
+  port: 6379
+auth:
+  hrpauth:
+    base_url: "http://localhost:2778"
+  maintenance_token: "t"
+matchmaking:
+  enabled: true
+  tick_seconds: 1
+  queue_timeout_seconds: 300
+  base_rating_window: 200
+  rating_window_growth_per_minute: 100
+  max_rating_window: 1000
+  modes:
+    - match_type: "1v1"
+      team_sizes: [1, 1]
+`
+	// 缺 assignment_ttl_seconds → 迁移注入默认 1800。
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "config.yaml")
+	if err := os.WriteFile(path, []byte(base), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("1.9.0 配置应能迁移加载: %v", err)
+	}
+	if cfg.Version != CurrentVersion {
+		t.Errorf("版本号不匹配: 期望 %s, 实际 %s", CurrentVersion, cfg.Version)
+	}
+	if cfg.Matchmaking.AssignmentTTLSeconds != 1800 {
+		t.Errorf("assignment_ttl_seconds = %d, want 1800（迁移默认值）", cfg.Matchmaking.AssignmentTTLSeconds)
+	}
+
+	// 显式值保留。
+	explicit := filepath.Join(tmpDir, "explicit.yaml")
+	if err := os.WriteFile(explicit, []byte(base+"  assignment_ttl_seconds: 900\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cfg2, err := Load(explicit)
+	if err != nil {
+		t.Fatalf("显式 assignment_ttl_seconds 应能加载: %v", err)
+	}
+	if cfg2.Matchmaking.AssignmentTTLSeconds != 900 {
+		t.Errorf("assignment_ttl_seconds = %d, want 900（显式值）", cfg2.Matchmaking.AssignmentTTLSeconds)
+	}
+
+	// 非法值（0）拒绝。
+	invalid := filepath.Join(tmpDir, "invalid.yaml")
+	if err := os.WriteFile(invalid, []byte(base+"  assignment_ttl_seconds: 0\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(invalid); err == nil {
+		t.Fatal("assignment_ttl_seconds = 0 应拒绝加载")
+	}
+}

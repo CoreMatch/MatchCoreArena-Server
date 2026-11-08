@@ -18,13 +18,16 @@ import (
 
 // fakeMatchmakingService 记录匹配调用，避免依赖数据库。
 type fakeMatchmakingService struct {
-	joinCalls    int
-	leaveCalls   int
-	lastUID      int64
-	lastType     string
-	lastMembers  []string
-	joinErr      error
-	leaveErr     error
+	joinCalls       int
+	leaveCalls      int
+	assignmentCalls int
+	lastUID         int64
+	lastType        string
+	lastMembers     []string
+	lastUUID        string
+	joinErr         error
+	leaveErr        error
+	assignmentErr   error
 }
 
 func (f *fakeMatchmakingService) Join(_ context.Context, uid int64, matchType string, partyMembers []string) ([]*service.QueueEntry, error) {
@@ -62,6 +65,21 @@ func (f *fakeMatchmakingService) QueueDepth(context.Context) (map[string]int64, 
 	return map[string]int64{}, nil
 }
 
+func (f *fakeMatchmakingService) Assignment(_ context.Context, uuid string) (*service.MatchAssignment, error) {
+	f.assignmentCalls++
+	f.lastUUID = uuid
+	if f.assignmentErr != nil {
+		return nil, f.assignmentErr
+	}
+	return &service.MatchAssignment{
+		Assigned:  true,
+		GroupID:   5,
+		MatchType: "2v2",
+		FormedAt:  "2026-11-08T10:00:00Z",
+		TeamID:    "A",
+	}, nil
+}
+
 // newMatchmakingRouter 装配带鉴权中间件的匹配路由。
 func newMatchmakingRouter(v auth.Verifier, svc service.MatchmakingService) *gin.Engine {
 	gin.SetMode(gin.TestMode)
@@ -73,6 +91,7 @@ func newMatchmakingRouter(v auth.Verifier, svc service.MatchmakingService) *gin.
 	api.POST("/matchmaking/join", h.Join)
 	api.DELETE("/matchmaking/leave", h.Leave)
 	api.GET("/matchmaking/status", h.Status)
+	api.GET("/matchmaking/assignment/:uuid", h.Assignment)
 	return r
 }
 
@@ -195,6 +214,88 @@ func TestMatchmakingEndpoints(t *testing.T) {
 		}
 		if svc.lastUID != 7 {
 			t.Errorf("status uid = %d, want 7", svc.lastUID)
+		}
+	})
+}
+
+// TestAssignmentEndpoint 覆盖成局分配查询的 OPS 门控与信封
+//（契约 matchcorearena-business.yaml 1.9.0
+// GET /api/matchmaking/assignment/{uuid}）。
+func TestAssignmentEndpoint(t *testing.T) {
+	verifier := &fakeVerifier{
+		results: map[string]*auth.TokenResult{
+			"tok-user": {UID: 7, Scopes: []string{"user.read"}},
+			"tok-ops":  {UID: -100, Scopes: []string{"match:report"}, Ops: true},
+		},
+	}
+
+	t.Run("ops credential gets assignment", func(t *testing.T) {
+		svc := &fakeMatchmakingService{}
+		r := newMatchmakingRouter(verifier, svc)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/matchmaking/assignment/uuid-1", nil)
+		req.Header.Set("Authorization", "Bearer tok-ops")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200 (body=%s)", w.Code, w.Body.String())
+		}
+		if svc.assignmentCalls != 1 || svc.lastUUID != "uuid-1" {
+			t.Errorf("unexpected assignment call: %+v", svc)
+		}
+		if !strings.Contains(w.Body.String(), `"assigned":true`) || !strings.Contains(w.Body.String(), `"group_id":5`) {
+			t.Errorf("body missing assignment payload: %s", w.Body.String())
+		}
+	})
+
+	t.Run("player token rejected 403", func(t *testing.T) {
+		svc := &fakeMatchmakingService{}
+		r := newMatchmakingRouter(verifier, svc)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/matchmaking/assignment/uuid-1", nil)
+		req.Header.Set("Authorization", "Bearer tok-user")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		if w.Code != http.StatusForbidden {
+			t.Fatalf("status = %d, want 403 (body=%s)", w.Code, w.Body.String())
+		}
+		if code := assertEnvelope(t, w); code != "oauth_insufficient_scope" {
+			t.Fatalf("code = %q, want oauth_insufficient_scope", code)
+		}
+		if svc.assignmentCalls != 0 {
+			t.Errorf("Assignment must not be called for player tokens")
+		}
+	})
+
+	t.Run("missing token rejected 401", func(t *testing.T) {
+		svc := &fakeMatchmakingService{}
+		r := newMatchmakingRouter(verifier, svc)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/matchmaking/assignment/uuid-1", nil)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		if w.Code != http.StatusUnauthorized {
+			t.Fatalf("status = %d, want 401 (body=%s)", w.Code, w.Body.String())
+		}
+	})
+
+	t.Run("unknown uuid surfaces 404 envelope", func(t *testing.T) {
+		svc := &fakeMatchmakingService{assignmentErr: apperr.New(apperr.CodeMCAUserNotFound, "玩家不存在")}
+		r := newMatchmakingRouter(verifier, svc)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/matchmaking/assignment/uuid-unknown", nil)
+		req.Header.Set("Authorization", "Bearer tok-ops")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		if w.Code != http.StatusNotFound {
+			t.Fatalf("status = %d, want 404 (body=%s)", w.Code, w.Body.String())
+		}
+		if code := assertEnvelope(t, w); code != "mca_user_not_found" {
+			t.Fatalf("code = %q, want mca_user_not_found", code)
 		}
 	})
 }

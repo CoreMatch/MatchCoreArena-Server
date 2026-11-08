@@ -81,14 +81,14 @@ func singleWinnerReport() service.TeamReportInput {
 }
 
 // expectFullSettlementAfterRating 登记"评分信息已就绪后"的完整结算
-// SQL 期望（matches 主表 11 列 → 双方连胜查询 → 逐个写入：users 更新
+// SQL 期望（matches 主表 12 列 → 双方连胜查询 → 逐个写入：users 更新
 // → 参与者明细 10 列 → 排行榜）。
 func expectFullSettlementAfterRating(mock sqlmock.Sqlmock) {
 	mock.ExpectExec(`INSERT INTO matches`).
 		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
 			sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
 			sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
-			sqlmock.AnyArg(), sqlmock.AnyArg()).
+			sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectQuery(`SELECT mp\.is_winner`).
 		WithArgs(int64(7)).

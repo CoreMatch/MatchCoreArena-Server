@@ -27,7 +27,7 @@ import (
 //  1. 将 CurrentVersion 提升到新版本；
 //  2. 在 migrations 列表中追加对应的迁移函数；
 //  3. 在 config.example.yaml 中同步更新。
-const CurrentVersion = "1.9.0"
+const CurrentVersion = "1.10.0"
 
 // AppConfig 应用配置根结构。
 type AppConfig struct {
@@ -64,8 +64,12 @@ type MatchmakingConfig struct {
 	BaseRatingWindow            int              `yaml:"base_rating_window"`
 	RatingWindowGrowthPerMinute int              `yaml:"rating_window_growth_per_minute"`
 	MaxRatingWindow             int              `yaml:"max_rating_window"`
-	Modes                       []MatchMode      `yaml:"modes"`
-	JoinTarget                  JoinTargetConfig `yaml:"join_target"`
+	// AssignmentTTLSeconds 成局分配有效期（秒，契约 1.9.0 的代理路由端点
+	// GET /api/matchmaking/assignment/{uuid} 用）：formed_at 距今超过该值
+	// 的成局不再视为有效分配。
+	AssignmentTTLSeconds int                `yaml:"assignment_ttl_seconds"`
+	Modes                []MatchMode        `yaml:"modes"`
+	JoinTarget           JoinTargetConfig   `yaml:"join_target"`
 }
 
 // JoinTargetConfig 成局后下发给客户端的游戏服务器地址（交接链路用）。
@@ -339,6 +343,20 @@ var migrations = []migration{
 			return in, nil
 		},
 	},
+	{
+		from: "1.9.0",
+		to:   "1.10.0",
+		run: func(in rawConfig) (rawConfig, error) {
+			// 新增 matchmaking.assignment_ttl_seconds（成局分配有效期，
+			// 代理路由端点用）。旧配置缺省时注入保守默认值 1800s。
+			if mm, ok := in["matchmaking"].(map[string]any); ok {
+				if _, ok := mm["assignment_ttl_seconds"]; !ok {
+					mm["assignment_ttl_seconds"] = 1800
+				}
+			}
+			return in, nil
+		},
+	},
 }
 
 // Load 从指定路径加载配置文件，并完成版本校验/迁移，最终反序列化为 AppConfig。
@@ -474,6 +492,9 @@ func validate(cfg *AppConfig) error {
 	if mm.RatingWindowGrowthPerMinute < 0 {
 		return errors.New("matchmaking.rating_window_growth_per_minute 不能为负数")
 	}
+	if mm.AssignmentTTLSeconds <= 0 {
+		return errors.New("matchmaking.assignment_ttl_seconds 必须为正数")
+	}
 	seen := make(map[string]bool, len(mm.Modes))
 	for _, mode := range mm.Modes {
 		if mode.MatchType == "" {
@@ -567,6 +588,7 @@ func createDefaultConfig(path string) error {
 			BaseRatingWindow:            200,
 			RatingWindowGrowthPerMinute: 100,
 			MaxRatingWindow:             1000,
+			AssignmentTTLSeconds:        1800,
 			Modes: []MatchMode{
 				{MatchType: "1v1", TeamSizes: []int{1, 1}},
 				{MatchType: "2v2", TeamSizes: []int{2, 2}},

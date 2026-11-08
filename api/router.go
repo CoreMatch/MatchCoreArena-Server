@@ -102,6 +102,7 @@ func Register(r *gin.Engine, db *sql.DB, oauthClient *auth.Client, ver auth.Veri
 		api.POST("/matchmaking/join", matchmakingH.Join)
 		api.DELETE("/matchmaking/leave", matchmakingH.Leave)
 		api.GET("/matchmaking/status", matchmakingH.Status)
+		api.GET("/matchmaking/assignment/:uuid", matchmakingH.Assignment) // 仅 OPS（handler 内门控）
 
 		// metrics（仅 OPS 级凭据）
 		api.GET("/metrics", metricsH.Metrics)

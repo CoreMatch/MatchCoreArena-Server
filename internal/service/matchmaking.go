@@ -69,6 +69,19 @@ type MatchmakingStatus struct {
 	QueueStats   QueueStats    `json:"queue_stats"`
 }
 
+// MatchAssignment 玩家当前的成局分配（代理路由用，契约
+// matchcorearena-business.yaml 1.9.0）。Assigned 为 false 时其余字段
+// 全部省略；JoinTarget 沿用成局记录的下发规则（未配置则省略）。
+// 只含路由所需的最小信息：无成员名单、无评分、无载荷。
+type MatchAssignment struct {
+	Assigned   bool        `json:"assigned"`
+	GroupID    int64       `json:"group_id,omitempty"`
+	MatchType  string      `json:"match_type,omitempty"`
+	FormedAt   string      `json:"formed_at,omitempty"`
+	TeamID     string      `json:"team_id,omitempty"`
+	JoinTarget *JoinTarget `json:"join_target,omitempty"`
+}
+
 // MatchmakingService 匹配业务接口。
 type MatchmakingService interface {
 	// Join 加入匹配队列。partyMembers 为成员 UUID 列表（与运维台字段
@@ -79,6 +92,10 @@ type MatchmakingService interface {
 	Leave(ctx context.Context, uid int64) error
 	// Status 查询用户排队状态与本人相关的近期成局记录。
 	Status(ctx context.Context, uid int64) (*MatchmakingStatus, error)
+	// Assignment 按玩家 UUID 查询当前有效成局分配（代理路由用，仅
+	// OPS 端点调用）：最近一次成局在"未被结算消费且未过
+	// assignment_ttl_seconds"时视为有效。
+	Assignment(ctx context.Context, uuid string) (*MatchAssignment, error)
 	// QueueDepth 按模式统计队列深度（可观测性用）。
 	QueueDepth(ctx context.Context) (map[string]int64, error)
 }
@@ -479,6 +496,84 @@ func (s *matchmakingService) groupMembers(ctx context.Context, groupID int64) ([
 		members = append(members, m)
 	}
 	return members, rows.Err()
+}
+
+// Assignment 按玩家 UUID 查询当前有效成局分配（契约 1.9.0，代理路由
+// 端点 GET /api/matchmaking/assignment/{uuid} 的业务实现）。
+//
+// 有效性：玩家最近一次成局在同时满足以下两点时视为有效分配——
+//  1. 未被结算消费：matches 中不存在引用该成局的记录
+//     （matches.matchmaking_group_id，v3 迁移落库）；
+//  2. 未过期：formed_at 距今不超过 assignment_ttl_seconds
+//     （数据库侧 TIMESTAMPDIFF 计算，与引擎同口径，避免时区偏差）。
+//
+// 过期或已结算一律回 assigned=false，不回退到更早的成局。
+// 信任边界与对局上报一致：uid 只来自 HRPAuth 解析结果。
+func (s *matchmakingService) Assignment(ctx context.Context, uuid string) (*MatchAssignment, error) {
+	uid, err := resolveUUID(ctx, s.authClient, s.redis, uuid)
+	if err != nil {
+		switch {
+		case errors.Is(err, auth.ErrUserNotFound):
+			return nil, apperr.New(apperr.CodeMCAUserNotFound,
+				fmt.Sprintf("玩家 (uuid: %s) 在 HRPAuth 中不存在", uuid))
+		case errors.Is(err, auth.ErrServiceAuth):
+			return nil, apperr.New(apperr.CodeOAuthHRPAuthDown,
+				"HRPAuth 服务凭据不可用，无法解析玩家身份")
+		default:
+			return nil, apperr.New(apperr.CodeOAuthHRPAuthDown,
+				fmt.Sprintf("解析玩家 (uuid: %s) 身份失败", uuid))
+		}
+	}
+
+	var groupID int64
+	var matchType, formedAt, teamID string
+	err = s.db.QueryRowContext(ctx,
+		`SELECT g.id, g.match_type, g.formed_at, gm.team_id
+		 FROM matchmaking_group_members gm
+		 JOIN matchmaking_groups g ON g.id = gm.group_id
+		 WHERE gm.user_uid = ?
+		 ORDER BY g.formed_at DESC, g.id DESC LIMIT 1`, uid).
+		Scan(&groupID, &matchType, &formedAt, &teamID)
+	if err == sql.ErrNoRows {
+		return &MatchAssignment{Assigned: false}, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("查询最近成局失败: %w", err)
+	}
+
+	var consumed int
+	if err := s.db.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM matches WHERE matchmaking_group_id = ?", groupID).
+		Scan(&consumed); err != nil {
+		return nil, fmt.Errorf("查询成局结算状态失败: %w", err)
+	}
+	if consumed > 0 {
+		return &MatchAssignment{Assigned: false}, nil
+	}
+
+	var expired int
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM matchmaking_groups
+		 WHERE id = ? AND TIMESTAMPDIFF(SECOND, formed_at, NOW()) >= ?`,
+		groupID, s.cfg.AssignmentTTLSeconds).
+		Scan(&expired); err != nil {
+		return nil, fmt.Errorf("查询成局有效期失败: %w", err)
+	}
+	if expired > 0 {
+		return &MatchAssignment{Assigned: false}, nil
+	}
+
+	asn := &MatchAssignment{
+		Assigned:  true,
+		GroupID:   groupID,
+		MatchType: matchType,
+		FormedAt:  formedAt,
+		TeamID:    teamID,
+	}
+	if s.cfg.JoinTarget.Configured() {
+		asn.JoinTarget = &JoinTarget{Host: s.cfg.JoinTarget.Host, Port: s.cfg.JoinTarget.Port}
+	}
+	return asn, nil
 }
 
 // QueueDepth 按模式统计队列深度。
