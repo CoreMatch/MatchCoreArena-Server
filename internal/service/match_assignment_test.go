@@ -1,14 +1,11 @@
 package service_test
 
 import (
-	"errors"
-	"net/http"
 	"testing"
 
 	sqlmock "github.com/DATA-DOG/go-sqlmock"
 
 	"MatchCoreArena-Server/config"
-	"MatchCoreArena-Server/internal/apperr"
 	"MatchCoreArena-Server/internal/service"
 )
 
@@ -176,7 +173,8 @@ func TestAssignmentNone(t *testing.T) {
 	})
 }
 
-// TestAssignmentUnknownUUID 未知 UUID → 404 mca_user_not_found（不触 DB）。
+// TestAssignmentUnknownUUID 未知 UUID 与"无分配"路由等价（契约 1.9.1）：
+// 回 assigned=false，不报 404，且不触达数据库。
 func TestAssignmentUnknownUUID(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
@@ -185,13 +183,12 @@ func TestAssignmentUnknownUUID(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 	svc := service.NewMatchmakingService(db, assignmentConfig(), newReportFakeHRPAuth(t), nil)
 
-	_, err = svc.Assignment(t.Context(), "uuid-unknown")
-	var ae *apperr.Error
-	if !errors.As(err, &ae) || ae.Code != apperr.CodeMCAUserNotFound {
-		t.Fatalf("err = %v, want mca_user_not_found", err)
+	asn, err := svc.Assignment(t.Context(), "uuid-unknown")
+	if err != nil {
+		t.Fatalf("Assignment: %v（未知 UUID 应为无分配而非错误）", err)
 	}
-	if ae.HTTPStatus() != http.StatusNotFound {
-		t.Fatalf("status = %d, want 404", ae.HTTPStatus())
+	if asn.Assigned {
+		t.Error("assigned = true, want false（未知 UUID）")
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet expectations: %v", err)

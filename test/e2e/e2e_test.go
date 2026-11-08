@@ -915,10 +915,10 @@ func TestMatchCoreE2E(t *testing.T) {
 		}
 	})
 
-	// 成局分配查询（契约 1.9.0，代理路由用）：105/106 的 1v1 成局未被
+	// 成局分配查询（契约 1.9.0/1.9.1，代理路由用）：105/106 的 1v1 成局未被
 	// 结算引用（幂等子测试的上报未携带 matchmaking_group_id）→ 有效；
 	// 107 的 2v2 成局已被共享结算上报引用 → 已消费。玩家令牌 403，
-	// 未知 UUID 404。
+	// 未知 UUID 等价无分配（assigned:false）。
 	t.Run("assignment query for proxy routing", func(t *testing.T) {
 		// 玩家令牌被拒（即使带 scope 也只认 OPS 凭据）。
 		status, envelope := doJSON(t, env, http.MethodGet, "/api/matchmaking/assignment/e2e-uuid-5", userToken(105), nil)
@@ -955,10 +955,13 @@ func TestMatchCoreE2E(t *testing.T) {
 			t.Fatalf("assigned = %v, want false（成局已被结算消费）", asn["assigned"])
 		}
 
-		// 未知 UUID → 404 mca_user_not_found。
+		// 未知 UUID 与"无分配"路由等价（1.9.1）：200 + assigned:false。
 		status, envelope = doJSON(t, env, http.MethodGet, "/api/matchmaking/assignment/e2e-uuid-unknown", reporterToken, nil)
-		if status != http.StatusNotFound || envelope["code"] != "mca_user_not_found" {
-			t.Fatalf("未知 UUID status/code = %d/%v, want 404/mca_user_not_found", status, envelope["code"])
+		if status != http.StatusOK {
+			t.Fatalf("未知 UUID status = %d, want 200 (body=%v)", status, envelope)
+		}
+		if asn = dataMap(t, envelope); asn["assigned"] != false {
+			t.Fatalf("未知 UUID assigned = %v, want false", asn["assigned"])
 		}
 	})
 
