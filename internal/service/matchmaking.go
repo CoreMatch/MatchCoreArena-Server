@@ -498,7 +498,7 @@ func (s *matchmakingService) groupMembers(ctx context.Context, groupID int64) ([
 	return members, rows.Err()
 }
 
-// Assignment 按玩家 UUID 查询当前有效成局分配（契约 1.9.0，代理路由
+// Assignment 按玩家 UUID 查询当前有效成局分配（契约 1.9.0/1.9.1，代理路由
 // 端点 GET /api/matchmaking/assignment/{uuid} 的业务实现）。
 //
 // 有效性：玩家最近一次成局在同时满足以下两点时视为有效分配——
@@ -508,14 +508,17 @@ func (s *matchmakingService) groupMembers(ctx context.Context, groupID int64) ([
 //     （数据库侧 TIMESTAMPDIFF 计算，与引擎同口径，避免时区偏差）。
 //
 // 过期或已结算一律回 assigned=false，不回退到更早的成局。
+// HRPAuth 未知的 UUID 与"无分配"路由等价（1.9.1）：同样回
+// assigned=false，调用方无需分支 404；仅解析本身失败（服务不可达、
+// 凭据不可用）才以类型化错误返回。
 // 信任边界与对局上报一致：uid 只来自 HRPAuth 解析结果。
 func (s *matchmakingService) Assignment(ctx context.Context, uuid string) (*MatchAssignment, error) {
 	uid, err := resolveUUID(ctx, s.authClient, s.redis, uuid)
 	if err != nil {
 		switch {
 		case errors.Is(err, auth.ErrUserNotFound):
-			return nil, apperr.New(apperr.CodeMCAUserNotFound,
-				fmt.Sprintf("玩家 (uuid: %s) 在 HRPAuth 中不存在", uuid))
+			// 未知 UUID = 无分配（1.9.1）：路由调用方不需要 404。
+			return &MatchAssignment{Assigned: false}, nil
 		case errors.Is(err, auth.ErrServiceAuth):
 			return nil, apperr.New(apperr.CodeOAuthHRPAuthDown,
 				"HRPAuth 服务凭据不可用，无法解析玩家身份")

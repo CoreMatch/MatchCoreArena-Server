@@ -18,6 +18,10 @@ UUID was missing.
   `group_id`, `match_type`, `formed_at`, `team_id`, `join_target`), no
   member lists, scores or payloads. OPS-level credentials only, like the
   other operational reads; player tokens answer 403 even with scopes.
+  A UUID unknown to HRPAuth is routing-equivalent to "no assignment" and
+  answers `200 {assigned: false}` (1.9.1) — callers never branch on 404;
+  only a failed resolution (HRPAuth unreachable, unusable service
+  credential) answers `502 oauth_hrpauth_down`.
 - Validity: the player's MOST RECENT formed group is the assignment while
   (a) no `matches` row references it via `matchmaking_group_id` (a settled
   match consumes the assignment) and (b) `formed_at` is within
@@ -48,5 +52,5 @@ UUID was missing.
 - internal/service/match.go::Report — matchmaking_group_id persisted when provided
 - config/config.go::MatchmakingConfig — AssignmentTTLSeconds (config 1.10.0, migration injects 1800)
 - migrate/m003_assignment_link.go::applyV3 — matches.matchmaking_group_id column + idx_mm_group
-- HA-Contract docs/api/openapi/matchcorearena-business.yaml (version 1.9.0, path /api/matchmaking/assignment/{uuid}, schema MatchAssignment)
-- test/e2e/e2e_test.go::TestMatchCoreE2E — "assignment query for proxy routing" subtest (valid / consumed / 403 / 404)
+- HA-Contract docs/api/openapi/matchcorearena-business.yaml (version 1.9.1, path /api/matchmaking/assignment/{uuid}, schema MatchAssignment)
+- test/e2e/e2e_test.go::TestMatchCoreE2E — "assignment query for proxy routing" subtest (valid / consumed / 403 / unknown-uuid answers assigned:false)

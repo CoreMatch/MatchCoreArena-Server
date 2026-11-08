@@ -28,6 +28,7 @@ type fakeMatchmakingService struct {
 	joinErr         error
 	leaveErr        error
 	assignmentErr   error
+	assignment      *service.MatchAssignment
 }
 
 func (f *fakeMatchmakingService) Join(_ context.Context, uid int64, matchType string, partyMembers []string) ([]*service.QueueEntry, error) {
@@ -70,6 +71,9 @@ func (f *fakeMatchmakingService) Assignment(_ context.Context, uuid string) (*se
 	f.lastUUID = uuid
 	if f.assignmentErr != nil {
 		return nil, f.assignmentErr
+	}
+	if f.assignment != nil {
+		return f.assignment, nil
 	}
 	return &service.MatchAssignment{
 		Assigned:  true,
@@ -282,8 +286,8 @@ func TestAssignmentEndpoint(t *testing.T) {
 		}
 	})
 
-	t.Run("unknown uuid surfaces 404 envelope", func(t *testing.T) {
-		svc := &fakeMatchmakingService{assignmentErr: apperr.New(apperr.CodeMCAUserNotFound, "玩家不存在")}
+	t.Run("unknown uuid answers assigned false (contract 1.9.1)", func(t *testing.T) {
+		svc := &fakeMatchmakingService{assignment: &service.MatchAssignment{Assigned: false}}
 		r := newMatchmakingRouter(verifier, svc)
 
 		req := httptest.NewRequest(http.MethodGet, "/api/matchmaking/assignment/uuid-unknown", nil)
@@ -291,11 +295,28 @@ func TestAssignmentEndpoint(t *testing.T) {
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, req)
 
-		if w.Code != http.StatusNotFound {
-			t.Fatalf("status = %d, want 404 (body=%s)", w.Code, w.Body.String())
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200（未知 UUID 等价无分配）(body=%s)", w.Code, w.Body.String())
 		}
-		if code := assertEnvelope(t, w); code != "mca_user_not_found" {
-			t.Fatalf("code = %q, want mca_user_not_found", code)
+		if !strings.Contains(w.Body.String(), `"assigned":false`) {
+			t.Errorf("body missing assigned:false: %s", w.Body.String())
+		}
+	})
+
+	t.Run("resolution failure surfaces 502 envelope", func(t *testing.T) {
+		svc := &fakeMatchmakingService{assignmentErr: apperr.New(apperr.CodeOAuthHRPAuthDown, "HRPAuth 不可达")}
+		r := newMatchmakingRouter(verifier, svc)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/matchmaking/assignment/uuid-1", nil)
+		req.Header.Set("Authorization", "Bearer tok-ops")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		if w.Code != http.StatusBadGateway {
+			t.Fatalf("status = %d, want 502 (body=%s)", w.Code, w.Body.String())
+		}
+		if code := assertEnvelope(t, w); code != "oauth_hrpauth_down" {
+			t.Fatalf("code = %q, want oauth_hrpauth_down", code)
 		}
 	})
 }
