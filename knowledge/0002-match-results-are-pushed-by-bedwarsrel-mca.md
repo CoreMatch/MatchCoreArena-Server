@@ -50,10 +50,12 @@ endpoint must be protected so that only trusted system callers can write ratings
     safe, not guaranteed.
   - The plugin skips reporting while no credential is configured (the
     committed `access-token` placeholder keeps it unused).
-  - This repository commits `config/tokens.yaml` containing the placeholder token
-    `default-match-report-token-change-me`; auto-generation of random tokens only
-    happens when the file is absent, so a deployment that keeps the committed file
-    runs with a known placeholder unless operators replace it.
+  - This repository commits `config/tokens.yaml.example` containing the placeholder
+    token `default-match-report-token-change-me`; the live `config/tokens.yaml` is
+    gitignored and per-instance (copied from the example). Auto-generation of random
+    tokens only happens when the file is absent at runtime, so a deployment that
+    keeps the placeholder example runs with a known placeholder unless operators
+    replace it.
   - The `maintenance` scope implicitly passes every scope check, so the maintenance
     credential can also report matches.
   - A report fails as a whole if any participant cannot be resolved (see 0003).
@@ -66,9 +68,9 @@ endpoint must be protected so that only trusted system callers can write ratings
 - api/middleware/auth.go::HasScope — HasScope with `maintenance` bypass
 - internal/auth/verifier.go::TokenResult — Ops flag on maintenance/service-token results
 - internal/auth/tokens.go::createDefaultTokenStore — default token store incl. `match-reporter` (UID -100, scopes match:report/user:read)
-- config/tokens.yaml (field: match-reporter) — committed service-token file with placeholder token
+- config/tokens.yaml.example (field: match-reporter) — committed service-token template with placeholder token (the live `config/tokens.yaml` is gitignored, per-instance)
 - internal/service/match.go::TeamReportInput — TeamReportInput / TeamInfo / ParticipantReport shapes
-- config/tokens.yaml:L2-L2 fp=40835f02 ~ 用于系统间调用、游戏服务器上报等场景，独立于 HRPAuth 用户体系。 — comment stating service tokens serve cross-system calls such as game-server reporting, independent of HRPAuth users
+- config/tokens.yaml.example:L2-L2 fp=40835f02 ~ 用于系统间调用、游戏服务器上报等场景，独立于 HRPAuth 用户体系。 — comment stating service tokens serve cross-system calls such as game-server reporting, independent of HRPAuth users
 - BedwarsRel-MCA (read-only reference): /home/lnb/Desktop/HA/BedwarsRel-MCA/common/src/main/java/io/github/bedwarsrel/mca/MatchReportService.java::reportGameEnd — entry point with Bearer token; /home/lnb/Desktop/HA/BedwarsRel-MCA/common/src/main/java/io/github/bedwarsrel/mca/MatchReportService.java::sendWithRetry — classification-driven retries; /home/lnb/Desktop/HA/BedwarsRel-MCA/common/src/main/java/io/github/bedwarsrel/mca/MatchReportService.java::onGameOver — summary build and idempotency-ledger skip; /home/lnb/Desktop/HA/BedwarsRel-MCA/common/src/main/java/io/github/bedwarsrel/mca/MatchReportPayload.java::MatchReportPayload — JSON body per HA-Contract TeamReportInput; /home/lnb/Desktop/HA/BedwarsRel-MCA/common/src/main/java/io/github/bedwarsrel/mca/GameIdGenerator.java::GameIdGenerator — stable game_id generation
 - BedwarsRel-MCA (read-only reference): /home/lnb/Desktop/HA/BedwarsRel-MCA/common/src/main/java/io/github/bedwarsrel/game/GameCycle.java::runGameOver — report triggered in runGameOver
 - BedwarsRel-MCA (read-only reference): /home/lnb/Desktop/HA/BedwarsRel-MCA/common/src/main/resources/config.yml (field: match-reporting) — `match-reporting.api-url` (default https://api.matchcorearena.com/api/matches) and `access-token` placeholder
