@@ -5,9 +5,12 @@ kind: service
 project: mca-server
 display_name: MatchCoreArena-Server
 group: game
-# /api/status 上报的 version 即 config.CurrentVersion "1.9.0"
-# （api/router.go 公开端点；仓库无 git 版本 tag）。
-service_version: "1.9.0"
+# /api/status 上报的 version = 装载迁移后的配置版本，恒等于代码
+# config.CurrentVersion "1.11.0"（main.go 传 appCfg.Version；
+# config/config.go Load 迁移后校验 gotVersion == CurrentVersion）。
+# 1.9.0 之后的增量：1.10.0 assignment_ttl_seconds（契约 1.9.1 分配查询）、
+# 1.11.0 room_reservation_ttl_seconds + matchmaking.servers（契约 1.10.0 房间层）。
+service_version: "1.11.0"
 
 facts:
   ports:
@@ -60,9 +63,10 @@ facts:
   config:
     # config/config.go Load：默认路径 config/config.yaml（CONFIG_PATH 可覆盖）；
     # 生产在位 /www/wwwroot/mca/config/config.yaml（PROD-UPGRADE §10-1）。
-    # 模板版本 = 模板首行 version: "1.9.0"（代码 CurrentVersion 同值）。
+    # 模板版本 = 模板首行 version: "1.11.0"（代码 CurrentVersion 同值；
+    # Deployer 模板已含 1.10.0/1.11.0 两个 TTL 键，装载不依赖内存迁移）。
     - path: config/config.yaml
-      template_version: "1.9.0"
+      template_version: "1.11.0"
   static_assets: ""
 
 baremetal:
