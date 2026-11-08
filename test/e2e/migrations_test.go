@@ -261,7 +261,7 @@ func TestMigrationDualPathSchemaParity(t *testing.T) {
 	if err := migrate.RunMigrations(cfg); err != nil {
 		t.Fatalf("旧库升级迁移失败: %v", err)
 	}
-	assertAppliedVersions(t, db, 1, 2)
+	assertAppliedVersions(t, db, 1, 2, 3)
 	assertLegacyDataPreserved(t, db)
 	upgradedFP := schemaFingerprint(t, db)
 	db.Close()
@@ -272,7 +272,7 @@ func TestMigrationDualPathSchemaParity(t *testing.T) {
 		t.Fatalf("全新库初始化迁移失败: %v", err)
 	}
 	db = openMigrationTestDB(t, dsn)
-	assertAppliedVersions(t, db, 1, 2)
+	assertAppliedVersions(t, db, 1, 2, 3)
 	freshFP := schemaFingerprint(t, db)
 	db.Close()
 
@@ -308,7 +308,7 @@ func TestMigrationConcurrentInstances(t *testing.T) {
 
 	db := openMigrationTestDB(t, dsn)
 	defer db.Close()
-	assertAppliedVersions(t, db, 1, 2)
+	assertAppliedVersions(t, db, 1, 2, 3)
 
 	var duplicated int
 	err := db.QueryRow(
@@ -345,5 +345,5 @@ func TestMigrationRerunIsNoop(t *testing.T) {
 	}
 	db := openMigrationTestDB(t, dsn)
 	defer db.Close()
-	assertAppliedVersions(t, db, 1, 2)
+	assertAppliedVersions(t, db, 1, 2, 3)
 }
