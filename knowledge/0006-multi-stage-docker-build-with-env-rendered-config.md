@@ -32,7 +32,8 @@ while the image itself should stay small and free of build tooling.
     them silently falls back to auto-generated local config instead of failing,
     which can mask misdeployment.
   - Secrets management is delegated entirely to the deployment environment; the
-    repo ships placeholder credentials in `config/tokens.yaml` (see 0002).
+    repo ships placeholder credentials in `config/tokens.yaml.example` (the live
+    `config/tokens.yaml` is gitignored; see 0002).
   - The image assumes external MySQL/Redis endpoints reachable over the network;
     health-check and restart policies are not defined in this repository.
 
