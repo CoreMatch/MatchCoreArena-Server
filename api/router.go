@@ -42,12 +42,16 @@ func Register(r *gin.Engine, db *sql.DB, oauthClient *auth.Client, ver auth.Veri
 	matchmakingH := handler.NewMatchmakingHandler(matchmakingSvc)
 	metricsH := handler.NewMetricsHandler(matchmakingSvc)
 
-	// 公开端点
-	r.GET("/api/status", func(c *gin.Context) {
+	// 公开端点。/api/status 是全仓唯一开放跨域读取的路由（收紧白名单，
+	// 仅 mcnb.dev 门户；契约 matchcorearena-business.yaml 1.8.0），
+	// 其余端点一律不挂 CORS。
+	statusCORS := middleware.StatusCORS()
+	r.GET("/api/status", statusCORS, func(c *gin.Context) {
 		response.OK(c, "MatchCoreArena Server 运行中", gin.H{
 			"version": version,
 		})
 	})
+	r.OPTIONS("/api/status", statusCORS)
 
 	// 认证端点（公开，无需鉴权）
 	authGroup := r.Group("/api/auth")
