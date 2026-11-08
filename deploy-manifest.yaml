@@ -74,7 +74,7 @@ baremetal:
     binary_name: mca
   artifact:
     source: local_path
-    local_path: /home/lnb/Desktop/HA/MatchCoreArena-Server/build/mca
+    local_path: build/mca
 
 container:
   enabled: false
