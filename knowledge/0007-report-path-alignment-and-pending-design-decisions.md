@@ -66,22 +66,42 @@ is decided, the decision lands here.
      v5): `/api/matchmaking/invites` (+ accept/reject) and the join-time
      consent checks, see 0012.
 
-### Pending author decisions
-
-The following 2 items still wait for an author decision; each needs a
-semantic or design choice, not a mechanical fix.
+### Deferred by the author (NOT decided — status quo kept)
 
 1. **`perf_tweak` is hardcoded to 1.0 by the reporter** (BedwarsRel-MCA), so
-   the individual performance weight currently has no effect end-to-end
-   (the server-side mechanism is live and validated, see decision 1 above).
-2. **Duration equality strictness**: a positive `duration_seconds` must
-   exactly equal `finished_at - started_at` (0011, parity with the ops
-   panel). If real game reporters ever send a measured duration that
-   legitimately differs from the timestamp span, this rule would reject
-   those reports; whether to relax it is open.
+   the individual performance weight currently has no effect end-to-end:
+   the server-side mechanism is live and validated, but `W_perf ≡ 1.0`
+   means same-team members settle identical deltas and the ±5% band is
+   inert. Author decision 2026-11-12: **deferred, zero code change**.
+   Options recorded for a future decision:
+   - **A. Reporter computes real perf** — server unchanged; risks:
+     semantics drift across reporter implementations, and each reporter
+     can bias its players' deltas within ±5% per match.
+   - **B. Server derives perf from already-reported match stats**
+     (kills/deaths/survival_time are already in the payload and stored in
+     `match_participants`) — one unified formula at the rating authority;
+     needs the derivation designed and tuned.
+   - **C. Remove the parameter entirely** — honest (it is inert today)
+     but closes the extension point.
+   Leaning note (not a decision): B keeps the scoring semantics on the
+   single rating authority and needs no new data collection.
+
+### Pending author decisions
+
+No items currently wait for a decision; the deferred item above is the
+only open question.
 
 ### Resolved items (no longer open)
 
+- **Duration equality strictness** (former open item 11, decided
+  2026-11-12): relaxed to a configured tolerance —
+  `report.duration_tolerance_seconds` (default ±2s; contract 1.13.0,
+  config template 1.13.0). A positive `duration_seconds` may now differ
+  from `finished_at - started_at` by up to the tolerance; beyond it the
+  report is still rejected `400 mca_report_inconsistent`. Kept semantics:
+  `duration_seconds <= 0` skips the comparison (negative values rejected),
+  and the payload hash / game_id idempotency are untouched (duration stays
+  in the hash, so conflict detection is unchanged).
 - **Season handling** (former open item 5, decided 2026-11-12): manual
   OPS-only rollover implemented (contract 1.12.0, migration v6, 0021) —
   no time-based automatic rollover, reset is an explicit caller parameter
@@ -125,11 +145,13 @@ semantic or design choice, not a mechanical fix.
   exist only for that compatibility.
 - Streaks reflect real per-player results because they read
   `match_participants`.
-- The 2 pending items above remain open. The 2026-11-12 decisions are
+- The `perf_tweak` item is deferred by the author (status quo kept, zero
+  code change; options recorded above). The 2026-11-12 decisions are
   settled: score/perf columns are written by settlement, `virtual` results
   settle deliberately, party joins require caller membership plus member
-  consent, the K-factor derivation is documented (0020), and seasons roll
-  over only by manual OPS action (0021).
+  consent, the K-factor derivation is documented (0020), seasons roll over
+  only by manual OPS action (0021), and the duration check allows a
+  configured ±tolerance (contract 1.13.0).
 
 ## Evidence
 - migrate/migrations/baseline.sql::winner_uid — winner_uid/loser_uid NOT NULL DEFAULT 0; match_participants and matches.winner_team_id / survival_rate part of the baseline
@@ -137,6 +159,8 @@ semantic or design choice, not a mechanical fix.
 - internal/service/match.go::getUserStreak — streak query over match_participants.is_winner
 - internal/service/match.go::updateRanking — rankings upsert for the season resolved at settlement time (current season since contract 1.12.0; hard-coded 1 before)
 - internal/service/match.go::perfAvgOf — settlement writes winner/loser_score (pre-settlement side averages, the Elo inputs) and winner/loser_perf (effective perf_tweak averages); draws keep column defaults
+- internal/service/match.go::durationTolerance — duration consistency check with the configured ±tolerance (contract 1.13.0)
+- config/config.go::DurationToleranceSeconds — report.duration_tolerance_seconds (default 2s when absent)
 - migrate/migrate.go::ApplyMigrations — versioned migration chain resolving former open item 1 (see 0017)
 - .gitignore (field: config/tokens.yaml) — real service-token file untracked; only the example is committed
 - deploy-manifest.yaml (field: data_dirs) — production tokens.yaml location recorded nowhere
