@@ -30,9 +30,9 @@ transaction that records a match report:
   with a real-time `ORDER BY score DESC` — no precomputed positions, no Redis ZSET.
 
 The K-factor constants carry the code comment "Constants based on CS2 Premier
-Rating research report". A research PDF about deriving score-weight models for
-three match situations was committed alongside the reporting flow; it is a binary
-file and its content was not verified for this entry.
+Rating research report". The repo-root research PDF (binary) is the source of
+the model; the reviewable derivation — why 520/390 for the placement decay and
+190 for stability, and what each choice implies — is documented in 0020.
 
 ## Consequences
 - All rating math is auditable per match: `match_participants` stores
@@ -59,8 +59,8 @@ file and its content was not verified for this entry.
 - internal/service/match.go::scoreUpdate — rank_score floor at 0
 - internal/service/match.go::updateRanking — rankings upsert, season = 1
 - internal/service/ranking.go::GetTop — real-time top-N query; scale caveat comment inside GetTop
-- research-推导三种对局情况的记分权重近似模型.pdf — binary research document, content not verified
+- research-推导三种对局情况的记分权重近似模型.pdf — binary research document; reviewable derivation extracted in 0020
 - commit bb8b7c6136b1cf98bc8a40bdbf8294aef2bd9137 — feat: implement elo ranking and match reporting (2026-09-12)
 - commit 6279658307d011791f3a15a166ae81caf1c7c5dd — feat(match): add team match support and participant tracking (2026-09-18)
 - commit 7dc243d8ba789ae9926865f516bdfa105e1164d5 — added the research PDF (2026-09-11)
-- Why these exact constants were chosen: intent not documented in repo beyond the code comment; pending author confirmation
+- Cross-reference: 0020 (K-factor derivation and phase design — why 520/390/190)

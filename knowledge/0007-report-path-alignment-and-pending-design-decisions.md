@@ -68,20 +68,17 @@ is decided, the decision lands here.
 
 ### Pending author decisions
 
-The following 4 items still wait for an author decision; each needs a
+The following 3 items still wait for an author decision; each needs a
 semantic or design choice, not a mechanical fix.
 
-1. **K-factor constants**: the code comment cites a "CS2 Premier Rating
-   research report"; the derivation is a binary PDF in the repo root and is
-   not verifiable from text. Whether to document the derivation is open.
-2. **Season hardcoded to 1** in `updateRanking` calls
+1. **Season hardcoded to 1** in `updateRanking` calls
    (`internal/service/match.go`); season handling (windows, snapshots,
    per-season boards) is explicitly deferred by the author — no season code
    or tables exist by design until then.
-3. **`perf_tweak` is hardcoded to 1.0 by the reporter** (BedwarsRel-MCA), so
+2. **`perf_tweak` is hardcoded to 1.0 by the reporter** (BedwarsRel-MCA), so
    the individual performance weight currently has no effect end-to-end
    (the server-side mechanism is live and validated, see decision 1 above).
-4. **Duration equality strictness**: a positive `duration_seconds` must
+3. **Duration equality strictness**: a positive `duration_seconds` must
    exactly equal `finished_at - started_at` (0011, parity with the ops
    panel). If real game reporters ever send a measured duration that
    legitimately differs from the timestamp span, this rule would reject
@@ -89,6 +86,10 @@ semantic or design choice, not a mechanical fix.
 
 ### Resolved items (no longer open)
 
+- **K-factor derivation** (former open item 3, decided 2026-11-12):
+  documented reviewably in 0020 — each constant (520 / 390 / 190) maps to
+  an explicit passage of the research PDF; the values themselves are
+  unchanged.
 - **Schema drift on existing databases** (former open item 1): resolved by
   the versioned migration chain (0017) — v1 frozen baseline + additive v2,
   advisory-lock serialization across concurrently starting instances,
