@@ -70,15 +70,20 @@ matchmaking system must queue players (solo or as parties) and form matches.
   rollback). Queue state and formed matches live in MySQL (0005). Modes,
   sizes and all timing parameters are configuration
   (`config.MatchmakingConfig`).
+- Formation is not the end of the chain: the formed group is what the
+  proxy reads to route players (assignment query, 0018) and, when the
+  room layer is configured, formation also reserves a room that settlement
+  or TTL releases (0019). Read this record as a routing input, not as a
+  terminal match.
 
 ## Consequences
 - Ops-injected results move the same `users`/`rankings` tables as game
   matches by design; they are only distinguishable via `matches.source`
   (segmentation remains a pending author decision, 0007).
 - Matchmaking forms match records only; it does not start games or report
-  results. The formed-group record is the terminal artifact until a match is
-  reported (optionally linked via `matchmaking_group_id` for party-shared
-  settlement, 0012).
+  results. The formed-group record is the engine's terminal artifact until
+  a match is reported (optionally linked via `matchmaking_group_id` for
+  party-shared settlement, 0012).
 - Matchmaking parameters (window, growth, timeout, tick) are conservative
   placeholders, not tuned values.
 

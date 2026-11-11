@@ -45,9 +45,13 @@ known to be free when the players arrive.
 - Expired-but-uncleaned bindings can delay room reuse by at most one
   engine tick (the PK treats them as occupied until the cleanup DELETE).
 - Reporters that do not echo `matchmaking_group_id` never release rooms
-  early; TTL is the backstop (game-side reporters currently cannot know
-  the group id without the BedwarsRel-side integration, spec pending in
-  BedwarsRel-MCA knowledge).
+  early; TTL is the backstop. The BedwarsRel-MCA side now does echo it
+  (implemented 2026-11-08): on join the plugin queries the assignment,
+  places the player into the named game and attaches the remembered group
+  id to the match report; `MatchReportPayload` serializes
+  `matchmaking_group_id`. A full-chain E2E (real MCA with a room
+  inventory, real Velocity + VelocityGate, real sub-server) confirmed that
+  settlement releases the reservation — see BedwarsRel-MCA knowledge 0004.
 - VelocityGate needs no change: `join_target` semantics are unchanged.
 
 ## Evidence
