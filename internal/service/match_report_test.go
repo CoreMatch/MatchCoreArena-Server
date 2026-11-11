@@ -86,6 +86,13 @@ func expectPlayerWrites(mock sqlmock.Sqlmock, uid int64, delta int) {
 		WillReturnResult(sqlmock.NewResult(0, 1))
 }
 
+// expectCurrentSeason 登记结算事务内的"解析当前赛季"查询
+//（契约 1.12.0：结算写入跟随当前赛季）。
+func expectCurrentSeason(mock sqlmock.Sqlmock) {
+	mock.ExpectQuery(`SELECT MAX\(season\) FROM seasons`).
+		WillReturnRows(sqlmock.NewRows([]string{"season"}).AddRow(1))
+}
+
 // TestReportWinLoseUnified 覆盖统一 teams 形状的胜负局：双方初始 0 分，
 // E=0.5，K=520，完胜生存权重 1.25，连胜权重 1.0 → 胜者 +325、败者 -325
 //（下限 0）。INSERT matches 含 server_id/game_id/payload_hash 新列
@@ -100,6 +107,7 @@ func TestReportWinLoseUnified(t *testing.T) {
 	svc := service.NewMatchService(db, newReportFakeHRPAuth(t), nil)
 
 	mock.ExpectBegin()
+	expectCurrentSeason(mock)
 	mock.ExpectQuery(`SELECT rank_score, wins_count FROM users WHERE uid = \? AND deleted_at IS NULL`).
 		WithArgs(int64(7)).
 		WillReturnRows(sqlmock.NewRows([]string{"rank_score", "wins_count"}).AddRow(0, 0))
@@ -175,6 +183,7 @@ func TestReportCompatShape(t *testing.T) {
 	}
 
 	mock.ExpectBegin()
+	expectCurrentSeason(mock)
 	mock.ExpectQuery(`SELECT rank_score, wins_count FROM users WHERE uid = \? AND deleted_at IS NULL`).
 		WithArgs(int64(7)).
 		WillReturnRows(sqlmock.NewRows([]string{"rank_score", "wins_count"}).AddRow(0, 0))
@@ -222,6 +231,7 @@ func TestReportDrawUnified(t *testing.T) {
 	in.Teams[1].Result = service.ResultDraw
 
 	mock.ExpectBegin()
+	expectCurrentSeason(mock)
 	mock.ExpectQuery(`SELECT rank_score, wins_count FROM users WHERE uid = \? AND deleted_at IS NULL`).
 		WithArgs(int64(7)).
 		WillReturnRows(sqlmock.NewRows([]string{"rank_score", "wins_count"}).AddRow(1000, 12))
@@ -285,6 +295,7 @@ func TestReportScorePerfColumnsWritten(t *testing.T) {
 	}
 
 	mock.ExpectBegin()
+	expectCurrentSeason(mock)
 	mock.ExpectQuery(`SELECT rank_score, wins_count FROM users WHERE uid = \? AND deleted_at IS NULL`).
 		WithArgs(int64(7)).
 		WillReturnRows(sqlmock.NewRows([]string{"rank_score", "wins_count"}).AddRow(1000, 12))
@@ -450,6 +461,7 @@ func TestReportPartySharing(t *testing.T) {
 	}
 
 	mock.ExpectBegin()
+	expectCurrentSeason(mock)
 	for _, uid := range []int64{7, 8, 9} {
 		mock.ExpectQuery(`SELECT rank_score, wins_count FROM users WHERE uid = \? AND deleted_at IS NULL`).
 			WithArgs(uid).

@@ -133,6 +133,7 @@ func TestReportLazyProvisioning(t *testing.T) {
 	svc := service.NewMatchService(db, cli, nil) // redis=nil：强制走 HRPAuth 解析
 
 	mock.ExpectBegin()
+	expectCurrentSeason(mock)
 	// 首次查评分：无行。
 	mock.ExpectQuery(`SELECT rank_score, wins_count FROM users WHERE uid = \? AND deleted_at IS NULL`).
 		WithArgs(int64(7)).
@@ -181,6 +182,7 @@ func TestReportProvisioningIdempotent(t *testing.T) {
 	svc := service.NewMatchService(db, cli, nil)
 
 	mock.ExpectBegin()
+	expectCurrentSeason(mock)
 	mock.ExpectQuery(`SELECT rank_score, wins_count FROM users WHERE uid = \? AND deleted_at IS NULL`).
 		WithArgs(int64(7)).
 		WillReturnRows(sqlmock.NewRows([]string{"rank_score", "wins_count"}).AddRow(100, 3))
@@ -212,6 +214,7 @@ func TestReportProvisioningImpossible(t *testing.T) {
 	svc := service.NewMatchService(db, cli, nil)
 
 	mock.ExpectBegin()
+	expectCurrentSeason(mock)
 	mock.ExpectQuery(`SELECT rank_score, wins_count FROM users WHERE uid = \? AND deleted_at IS NULL`).
 		WithArgs(int64(7)).
 		WillReturnRows(sqlmock.NewRows([]string{"rank_score", "wins_count"}))

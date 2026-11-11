@@ -36,10 +36,9 @@ func (h *RankingHandler) GetTop(c *gin.Context) {
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
-	season, _ := strconv.Atoi(c.DefaultQuery("season", "1"))
-	if season <= 0 {
-		season = 1
-	}
+	// season 缺省/非正数不再写死 1：由服务层解析为当前赛季
+	//（契约 1.12.0 手动更季）。
+	season, _ := strconv.Atoi(c.Query("season"))
 
 	result, err := h.svc.GetTop(c.Request.Context(), rankType, limit, season)
 	if err != nil {
@@ -59,10 +58,8 @@ func (h *RankingHandler) GetMyRank(c *gin.Context) {
 		return
 	}
 
-	season, _ := strconv.Atoi(c.DefaultQuery("season", "1"))
-	if season <= 0 {
-		season = 1
-	}
+	// season 缺省/非正数由服务层解析为当前赛季（契约 1.12.0）。
+	season, _ := strconv.Atoi(c.Query("season"))
 
 	ranking, err := h.svc.GetMyRank(c.Request.Context(), uid, rankType, season)
 	if err != nil {

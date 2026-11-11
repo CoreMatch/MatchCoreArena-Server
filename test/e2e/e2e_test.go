@@ -1559,4 +1559,107 @@ func TestMatchCoreE2E(t *testing.T) {
 			t.Errorf("queue_depth 缺失或不是对象: %v", data["queue_depth"])
 		}
 	})
+
+	// 赛季手动更迭（契约 1.12.0，作者决策）：仅 OPS、逐季递增、重置
+	// 与否为显式参数、全程记录在案、重复调用 409 不再推进；更季后的
+	// 结算写新赛季，旧赛季榜可查，缺省 season 跟随当前赛季。放在最后：
+	// 重置评分会改动全局用户分。
+	t.Run("manual season rollover", func(t *testing.T) {
+		// 玩家令牌无更季权限 → 403。
+		status, envelope := doJSON(t, env, http.MethodPost, "/api/seasons/roll", userToken(101),
+			map[string]any{"target_season": 2})
+		if status != http.StatusForbidden || envelope["code"] != "oauth_insufficient_scope" {
+			t.Fatalf("玩家更季 status/code = %d/%v, want 403/oauth_insufficient_scope", status, envelope["code"])
+		}
+
+		// 初始：当前赛季 = 1（迁移种子）。
+		status, envelope = doJSON(t, env, http.MethodGet, "/api/seasons", userToken(101), nil)
+		if status != http.StatusOK {
+			t.Fatalf("查赛季 status = %d, want 200 (body=%v)", status, envelope)
+		}
+		seasons := dataArray(t, envelope)
+		if len(seasons) == 0 || jsonInt(t, seasons[0].(map[string]any), "season") != 1 {
+			t.Fatalf("当前赛季 = %v, want 1（迁移种子）", envelope)
+		}
+
+		// 重复/回退目标（1）→ 409 mca_season_exists；跳季（3）→ 400。
+		status, envelope = doJSON(t, env, http.MethodPost, "/api/seasons/roll", reporterToken,
+			map[string]any{"target_season": 1})
+		if status != http.StatusConflict || envelope["code"] != "mca_season_exists" {
+			t.Fatalf("重复赛季 status/code = %d/%v, want 409/mca_season_exists", status, envelope["code"])
+		}
+		status, envelope = doJSON(t, env, http.MethodPost, "/api/seasons/roll", reporterToken,
+			map[string]any{"target_season": 3})
+		if status != http.StatusBadRequest || envelope["code"] != "mca_invalid_request" {
+			t.Fatalf("跳季 status/code = %d/%v, want 400/mca_invalid_request", status, envelope["code"])
+		}
+
+		// 更季到 2：默认不重置评分，记录在案。
+		status, envelope = doJSON(t, env, http.MethodPost, "/api/seasons/roll", reporterToken,
+			map[string]any{"target_season": 2, "note": "e2e season 2"})
+		if status != http.StatusCreated {
+			t.Fatalf("更季 status = %d, want 201 (body=%v)", status, envelope)
+		}
+		if rec := dataMap(t, envelope); jsonInt(t, rec, "season") != 2 || rec["reset_scores"] != false {
+			t.Fatalf("更季记录 = %v, want season 2 且不重置", rec)
+		}
+		// 重复同一目标 → 409（重试安全：绝不重复推进）。
+		status, envelope = doJSON(t, env, http.MethodPost, "/api/seasons/roll", reporterToken,
+			map[string]any{"target_season": 2})
+		if status != http.StatusConflict || envelope["code"] != "mca_season_exists" {
+			t.Fatalf("更季重试 status/code = %d/%v, want 409/mca_season_exists", status, envelope["code"])
+		}
+
+		// 更季后的结算写入赛季 2；赛季 1 榜保留；缺省 season 跟随当前。
+		status, envelope = doJSON(t, env, http.MethodPost, "/api/matches", reporterToken, matchReport("e2e-uuid-1", "e2e-uuid-2"))
+		if status != http.StatusCreated {
+			t.Fatalf("更季后上报 status = %d, want 201 (body=%v)", status, envelope)
+		}
+		status, envelope = doJSON(t, env, http.MethodGet, "/api/rankings/1v1?season=2", userToken(101), nil)
+		if status != http.StatusOK {
+			t.Fatalf("查赛季2榜 status = %d (body=%v)", status, envelope)
+		}
+		if raw, _ := dataMap(t, envelope)["rankings"].([]any); len(raw) == 0 {
+			t.Fatalf("赛季 2 榜为空：更季后结算未写入新赛季 %v", envelope)
+		}
+		status, envelope = doJSON(t, env, http.MethodGet, "/api/rankings/1v1", userToken(101), nil)
+		if status != http.StatusOK {
+			t.Fatalf("缺省赛季查询 status = %d (body=%v)", status, envelope)
+		}
+		rawDefault, _ := dataMap(t, envelope)["rankings"].([]any)
+		if len(rawDefault) == 0 || jsonInt(t, rawDefault[0].(map[string]any), "season") != 2 {
+			t.Fatalf("缺省赛季榜 = %v, want 跟随当前赛季 2", envelope)
+		}
+		status, envelope = doJSON(t, env, http.MethodGet, "/api/rankings/1v1?season=1", userToken(101), nil)
+		if status != http.StatusOK {
+			t.Fatalf("查赛季1榜 status = %d (body=%v)", status, envelope)
+		}
+		if raw, _ := dataMap(t, envelope)["rankings"].([]any); len(raw) == 0 {
+			t.Fatalf("赛季 1 榜为空：旧赛季榜应保留 %v", envelope)
+		}
+
+		// 更季到 3 且显式重置：全员评分清零，新赛季从 0 开局。
+		status, envelope = doJSON(t, env, http.MethodPost, "/api/seasons/roll", reporterToken,
+			map[string]any{"target_season": 3, "reset_scores": true})
+		if status != http.StatusCreated {
+			t.Fatalf("重置更季 status = %d, want 201 (body=%v)", status, envelope)
+		}
+		if dataMap(t, envelope)["reset_scores"] != true {
+			t.Fatalf("更季记录 reset_scores = %v, want true", envelope)
+		}
+		if score := jsonInt(t, getUserProfile(t, env, 101), "rank_score"); score != 0 {
+			t.Fatalf("重置后 101 rank_score = %d, want 0", score)
+		}
+		status, envelope = doJSON(t, env, http.MethodPost, "/api/matches", reporterToken, matchReport("e2e-uuid-1", "e2e-uuid-2"))
+		if status != http.StatusCreated {
+			t.Fatalf("赛季3上报 status = %d, want 201 (body=%v)", status, envelope)
+		}
+		parts := participantsFrom(t, envelope)
+		if jsonInt(t, parts[101], "rank_score_before") != 0 {
+			t.Errorf("赛季3胜者 before = %d, want 0（重置后从零开局）", jsonInt(t, parts[101], "rank_score_before"))
+		}
+		if jsonInt(t, parts[101], "rank_score_delta") <= 0 {
+			t.Errorf("赛季3胜者 delta = %d, want 正增量", jsonInt(t, parts[101], "rank_score_delta"))
+		}
+	})
 }

@@ -28,6 +28,7 @@ func Register(r *gin.Engine, db *sql.DB, oauthClient *auth.Client, ver auth.Veri
 	teamSvc := service.NewTeamService(db)
 	matchSvc := service.NewMatchService(db, oauthClient, rdb)
 	rankingSvc := service.NewRankingService(db)
+	seasonSvc := service.NewSeasonService(db)
 	maintenanceSvc := service.NewMaintenanceService(db)
 	matchmakingSvc := service.NewMatchmakingService(db, appCfg.Matchmaking, oauthClient, rdb)
 
@@ -38,6 +39,7 @@ func Register(r *gin.Engine, db *sql.DB, oauthClient *auth.Client, ver auth.Veri
 	teamH := handler.NewTeamHandler(teamSvc)
 	matchH := handler.NewMatchHandler(matchSvc)
 	rankingH := handler.NewRankingHandler(rankingSvc, appCfg.Ranking.Tiers)
+	seasonH := handler.NewSeasonHandler(seasonSvc)
 	maintenanceH := handler.NewMaintenanceHandler(maintenanceSvc)
 	matchmakingH := handler.NewMatchmakingHandler(matchmakingSvc)
 	metricsH := handler.NewMetricsHandler(matchmakingSvc)
@@ -116,6 +118,10 @@ func Register(r *gin.Engine, db *sql.DB, oauthClient *auth.Client, ver auth.Veri
 		api.GET("/rankings/:type", rankingH.GetTop)
 		api.GET("/rankings/me", rankingH.GetMyRank)
 		api.GET("/rankings/tiers", rankingH.Tiers)
+
+		// seasons（契约 1.12.0：手动更季，无自动更季）
+		api.GET("/seasons", seasonH.List)
+		api.POST("/seasons/roll", seasonH.Roll) // 仅 OPS（handler 内门控）
 
 		// maintenance
 		api.POST("/maintenance/sql", maintenanceH.ExecuteSQL)

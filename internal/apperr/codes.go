@@ -55,6 +55,8 @@ const (
 	CodeMCAInviteExpired     Code = "mca_invite_expired"
 	CodeMCAInviteResolved    Code = "mca_invite_resolved"
 	CodeMCANotInvitee        Code = "mca_not_invitee"
+	// 赛季手动更迭（契约 1.12.0）：目标赛季已存在（含重复调用）。
+	CodeMCASeasonExists Code = "mca_season_exists"
 )
 
 // codeHTTPMap 将错误码映射到建议 HTTP 状态码。
@@ -94,6 +96,7 @@ var codeHTTPMap = map[Code]int{
 	CodeMCAInviteExpired:       http.StatusConflict,
 	CodeMCAInviteResolved:      http.StatusConflict,
 	CodeMCANotInvitee:          http.StatusForbidden,
+	CodeMCASeasonExists:        http.StatusConflict,
 }
 
 // StatusFromCode 根据错误码返回建议 HTTP 状态码，未注册的码返回 500。

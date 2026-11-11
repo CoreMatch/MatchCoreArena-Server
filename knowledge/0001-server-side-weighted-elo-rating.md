@@ -26,8 +26,10 @@ transaction that records a match report:
 - Teams are compared by average rating (winner-team average vs. all losers pooled).
 - `rank_score` is floored at 0 via `GREATEST(0, rank_score + ?)`.
 - Leaderboards are served from the `rankings` table, upserted per participant on
-  every report (`ON DUPLICATE KEY UPDATE`, season hard-coded to 1), and queried
-  with a real-time `ORDER BY score DESC` — no precomputed positions, no Redis ZSET.
+  every report (`ON DUPLICATE KEY UPDATE`, for the CURRENT season — resolved in
+  the settlement transaction since contract 1.12.0, hard-coded 1 before; see 0021),
+  and queried with a real-time `ORDER BY score DESC` — no precomputed positions,
+  no Redis ZSET.
 
 The K-factor constants carry the code comment "Constants based on CS2 Premier
 Rating research report". The repo-root research PDF (binary) is the source of
@@ -45,7 +47,8 @@ the model; the reviewable derivation — why 520/390 for the placement decay and
   - Leaderboard queries sort on every request (acknowledged in code comments as
     unsuitable for production scale without Redis ZSET or periodic `rank_position`
     updates).
-  - Season is hard-coded to 1 in `updateRanking`; there is no season rollover logic.
+  - Seasons roll over only by manual OPS action (0021); windows, snapshots and
+    per-season archival boards remain out of scope.
 
 ## Evidence
 - internal/rating/rating.go::KPlacementStart — constants incl. "CS2 Premier Rating research report" comment
@@ -57,7 +60,7 @@ the model; the reviewable derivation — why 520/390 for the placement decay and
 - internal/rating/rating_test.go — unit tests for the rating package (existence verified)
 - internal/service/match.go::Report — transactional report processing
 - internal/service/match.go::scoreUpdate — rank_score floor at 0
-- internal/service/match.go::updateRanking — rankings upsert, season = 1
+- internal/service/match.go::updateRanking — rankings upsert for the season resolved at settlement (0021)
 - internal/service/ranking.go::GetTop — real-time top-N query; scale caveat comment inside GetTop
 - research-推导三种对局情况的记分权重近似模型.pdf — binary research document; reviewable derivation extracted in 0020
 - commit bb8b7c6136b1cf98bc8a40bdbf8294aef2bd9137 — feat: implement elo ranking and match reporting (2026-09-12)

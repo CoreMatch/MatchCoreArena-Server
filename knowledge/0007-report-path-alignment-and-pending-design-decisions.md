@@ -68,17 +68,13 @@ is decided, the decision lands here.
 
 ### Pending author decisions
 
-The following 3 items still wait for an author decision; each needs a
+The following 2 items still wait for an author decision; each needs a
 semantic or design choice, not a mechanical fix.
 
-1. **Season hardcoded to 1** in `updateRanking` calls
-   (`internal/service/match.go`); season handling (windows, snapshots,
-   per-season boards) is explicitly deferred by the author — no season code
-   or tables exist by design until then.
-2. **`perf_tweak` is hardcoded to 1.0 by the reporter** (BedwarsRel-MCA), so
+1. **`perf_tweak` is hardcoded to 1.0 by the reporter** (BedwarsRel-MCA), so
    the individual performance weight currently has no effect end-to-end
    (the server-side mechanism is live and validated, see decision 1 above).
-3. **Duration equality strictness**: a positive `duration_seconds` must
+2. **Duration equality strictness**: a positive `duration_seconds` must
    exactly equal `finished_at - started_at` (0011, parity with the ops
    panel). If real game reporters ever send a measured duration that
    legitimately differs from the timestamp span, this rule would reject
@@ -86,6 +82,12 @@ semantic or design choice, not a mechanical fix.
 
 ### Resolved items (no longer open)
 
+- **Season handling** (former open item 5, decided 2026-11-12): manual
+  OPS-only rollover implemented (contract 1.12.0, migration v6, 0021) —
+  no time-based automatic rollover, reset is an explicit caller parameter
+  (default false), every rollover recorded; settlement and ranking
+  defaults follow the current season instead of the hard-coded 1. Season
+  windows/snapshots remain out of scope.
 - **K-factor derivation** (former open item 3, decided 2026-11-12):
   documented reviewably in 0020 — each constant (520 / 390 / 190) maps to
   an explicit passage of the research PDF; the values themselves are
@@ -123,16 +125,17 @@ semantic or design choice, not a mechanical fix.
   exist only for that compatibility.
 - Streaks reflect real per-player results because they read
   `match_participants`.
-- The 4 pending items above remain open. The 2026-11-12 decisions are
+- The 2 pending items above remain open. The 2026-11-12 decisions are
   settled: score/perf columns are written by settlement, `virtual` results
-  settle deliberately, and party joins require caller membership plus member
-  consent.
+  settle deliberately, party joins require caller membership plus member
+  consent, the K-factor derivation is documented (0020), and seasons roll
+  over only by manual OPS action (0021).
 
 ## Evidence
 - migrate/migrations/baseline.sql::winner_uid — winner_uid/loser_uid NOT NULL DEFAULT 0; match_participants and matches.winner_team_id / survival_rate part of the baseline
 - internal/service/match.go::winner_team_id — report INSERT columns (winner_uid/loser_uid not written)
 - internal/service/match.go::getUserStreak — streak query over match_participants.is_winner
-- internal/service/match.go::updateRanking — season hardcoded to 1
+- internal/service/match.go::updateRanking — rankings upsert for the season resolved at settlement time (current season since contract 1.12.0; hard-coded 1 before)
 - internal/service/match.go::perfAvgOf — settlement writes winner/loser_score (pre-settlement side averages, the Elo inputs) and winner/loser_perf (effective perf_tweak averages); draws keep column defaults
 - migrate/migrate.go::ApplyMigrations — versioned migration chain resolving former open item 1 (see 0017)
 - .gitignore (field: config/tokens.yaml) — real service-token file untracked; only the example is committed

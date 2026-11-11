@@ -455,6 +455,13 @@ func (s *matchService) Report(ctx context.Context, reporterUID int64, in TeamRep
 	}
 	defer tx.Rollback()
 
+	// 0. 事务内解析当前赛季（契约 1.12.0 手动更季）：整局结算用同一
+	// 赛季快照，更季与结算的先后顺序由事务隔离自然定序。
+	season, err := CurrentSeason(ctx, tx)
+	if err != nil {
+		return nil, false, err
+	}
+
 	// 1. 解析全部参与者身份并读取评分信息（uid 只来自 HRPAuth 解析结果，
 	// 缺行时在事务内懒建行）。
 	allParticipants := make(map[string]*userRatingInfo) // key: UUID
@@ -701,7 +708,7 @@ func (s *matchService) Report(ctx context.Context, reporterUID int64, in TeamRep
 		); err != nil {
 			return nil, false, fmt.Errorf("记录参与者失败 (uid: %d): %w", p.info.UID, err)
 		}
-		if err := s.updateRanking(ctx, tx, p.info.UID, in.MatchType, 1); err != nil {
+		if err := s.updateRanking(ctx, tx, p.info.UID, in.MatchType, season); err != nil {
 			return nil, false, err
 		}
 		after := p.info.RankScore + p.delta
