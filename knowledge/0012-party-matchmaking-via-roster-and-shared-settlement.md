@@ -34,9 +34,12 @@ rather than a parallel mechanism.
   cannot solo-queue (`409 mca_party_already_in_party`).
 
 ## Consequences
-- Consent is roster-based: whoever submits `party_members` queues the listed
-  users. Whether production needs member-side consent checks is a pending
-  author decision (0007).
+- Consent is required (author decision 2026-11-12, 0007): the caller must be
+  part of the submitted `party_members` roster and every other member must
+  have accepted an invitation from the caller (default deny; minimal
+  invite/accept state machine with dedicated endpoints). The former
+  roster-based "submitter queues the listed users" behaviour was a
+  privilege hole and is closed.
 - Party matching uses the members' rating snapshot at join time; rating
   changes between join and formation do not re-window the party.
 

@@ -78,8 +78,9 @@ matchmaking system must queue players (solo or as parties) and form matches.
 
 ## Consequences
 - Ops-injected results move the same `users`/`rankings` tables as game
-  matches by design; they are only distinguishable via `matches.source`
-  (segmentation remains a pending author decision, 0007).
+  matches by design; they are only distinguishable via `matches.source`.
+  Author decision 2026-11-12 (0007): this is deliberate — no separation,
+  no filtering, no retroactive rollback of settled `virtual` matches.
 - Matchmaking forms match records only; it does not start games or report
   results. The formed-group record is the engine's terminal artifact until
   a match is reported (optionally linked via `matchmaking_group_id` for
