@@ -86,7 +86,7 @@ container:
   # compose 平台冒烟全过，/api/status 上报 1.11.0）。digest 为生效引用，
   # tag 仅可读别名。注意容器形态必须独占数据库（compose 以 MCA_DB_NAME
   # 覆盖 DB_NAME，见 Deployer deploy/docker-compose.yml）。
-  # 注：Deployer 运行时的 registry 鉴权拉取本阶段未实现，此段为部署声明。
+  # 部署时 Deployer 按 digest 优先真实拉取本镜像（鉴权沿用宿主 docker 登录态；拉后摘要对照不符即响亮失败）。
   image:
     source: registry
     repo: limeight/ha-mca-server
