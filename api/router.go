@@ -26,7 +26,7 @@ func Register(r *gin.Engine, db *sql.DB, oauthClient *auth.Client, ver auth.Veri
 	userSvc := service.NewUserService(db)
 	friendSvc := service.NewFriendService(db)
 	teamSvc := service.NewTeamService(db)
-	matchSvc := service.NewMatchService(db, oauthClient, rdb)
+	matchSvc := service.NewMatchService(db, oauthClient, rdb, appCfg.Report.DurationToleranceSeconds)
 	rankingSvc := service.NewRankingService(db)
 	seasonSvc := service.NewSeasonService(db)
 	maintenanceSvc := service.NewMaintenanceService(db)

@@ -32,7 +32,7 @@ func TestListFilters(t *testing.T) {
 		t.Fatalf("sqlmock: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	svc := service.NewMatchService(db, nil, nil)
+	svc := service.NewMatchService(db, nil, nil, 2)
 
 	filter := service.MatchFilter{
 		Source:       "virtual",
@@ -83,7 +83,7 @@ func TestListNoFilter(t *testing.T) {
 		t.Fatalf("sqlmock: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	svc := service.NewMatchService(db, nil, nil)
+	svc := service.NewMatchService(db, nil, nil, 2)
 
 	mock.ExpectQuery(`FROM matches m ORDER BY m\.finished_at DESC, m\.id DESC LIMIT \? OFFSET \?`).
 		WithArgs(20, 0).
@@ -108,7 +108,7 @@ func TestListBadTimeFilter(t *testing.T) {
 		t.Fatalf("sqlmock: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	svc := service.NewMatchService(db, nil, nil)
+	svc := service.NewMatchService(db, nil, nil, 2)
 
 	_, err = svc.List(t.Context(), service.MatchFilter{FinishedFrom: "yesterday"}, service.Page{PageNum: 1, PageSize: 20})
 	var ae *apperr.Error
@@ -125,7 +125,7 @@ func TestListByUserSelfSummary(t *testing.T) {
 		t.Fatalf("sqlmock: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	svc := service.NewMatchService(db, nil, nil)
+	svc := service.NewMatchService(db, nil, nil, 2)
 
 	mock.ExpectQuery(`SELECT m\.id, m\.match_type, m\.source`).
 		WithArgs(int64(7), 20, 0).
@@ -165,7 +165,7 @@ func TestGetByGameID(t *testing.T) {
 			t.Fatalf("sqlmock: %v", err)
 		}
 		t.Cleanup(func() { _ = db.Close() })
-		svc := service.NewMatchService(db, nil, nil)
+		svc := service.NewMatchService(db, nil, nil, 2)
 
 		mock.ExpectQuery(`SELECT id, payload_hash FROM matches WHERE game_id = \?`).
 			WithArgs("g-1").
@@ -197,7 +197,7 @@ func TestGetByGameID(t *testing.T) {
 			t.Fatalf("sqlmock: %v", err)
 		}
 		t.Cleanup(func() { _ = db.Close() })
-		svc := service.NewMatchService(db, nil, nil)
+		svc := service.NewMatchService(db, nil, nil, 2)
 
 		mock.ExpectQuery(`SELECT id, payload_hash FROM matches WHERE game_id = \?`).
 			WithArgs("missing").
@@ -219,7 +219,7 @@ func TestGetByGameID(t *testing.T) {
 			t.Fatalf("sqlmock: %v", err)
 		}
 		t.Cleanup(func() { _ = db.Close() })
-		svc := service.NewMatchService(db, nil, nil)
+		svc := service.NewMatchService(db, nil, nil, 2)
 
 		_, err = svc.GetByGameID(t.Context(), "")
 		var ae *apperr.Error
@@ -236,7 +236,7 @@ func TestReportRejectionsAreLogged(t *testing.T) {
 		t.Fatalf("sqlmock: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	svc := service.NewMatchService(db, newReportFakeHRPAuth(t), nil)
+	svc := service.NewMatchService(db, newReportFakeHRPAuth(t), nil, 2)
 
 	before := len(rejectionsSnapshot(t))
 
@@ -254,7 +254,7 @@ func TestReportRejectionsAreLogged(t *testing.T) {
 		t.Fatalf("sqlmock: %v", err)
 	}
 	t.Cleanup(func() { _ = db2.Close() })
-	svc2 := service.NewMatchService(db2, newReportFakeHRPAuth(t), nil)
+	svc2 := service.NewMatchService(db2, newReportFakeHRPAuth(t), nil, 2)
 	mock2.ExpectQuery(`SELECT id, payload_hash FROM matches WHERE game_id = \?`).
 		WithArgs("log-test-1").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "payload_hash"}).AddRow(1, "other-hash"))

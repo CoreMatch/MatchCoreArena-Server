@@ -243,6 +243,8 @@ func setupEnv(t *testing.T) *e2eEnv {
 				{Name: "黄金", MinScore: 600},
 			},
 		},
+		// duration 容差取缺省值 2 秒（契约 1.13.0）。
+		Report: config.ReportConfig{DurationToleranceSeconds: 2},
 	}
 
 	gin.SetMode(gin.TestMode)
@@ -630,6 +632,30 @@ func TestMatchCoreE2E(t *testing.T) {
 		status, envelope = doJSON(t, env, http.MethodPost, "/api/matches", reporterToken, body)
 		if status != http.StatusBadRequest || envelope["code"] != "mca_report_inconsistent" {
 			t.Fatalf("duplicate uuid status/code = %d/%v, want 400/mca_report_inconsistent", status, envelope["code"])
+		}
+	})
+
+	// duration 容差（契约 1.13.0，e2e 配置容差 2 秒）：跨度 600 秒的
+	// 上报，漂移 2 秒接受、3 秒拒绝；0 仍跳过比对。用 103/104 结算，
+	// 避免扰动 101/102 的历史对局计数断言。
+	t.Run("duration tolerance", func(t *testing.T) {
+		within := matchReport("e2e-uuid-3", "e2e-uuid-4")
+		within["duration_seconds"] = 602
+		status, envelope := doJSON(t, env, http.MethodPost, "/api/matches", reporterToken, within)
+		if status != http.StatusCreated {
+			t.Fatalf("容差内 duration status = %d, want 201 (body=%v)", status, envelope)
+		}
+		beyond := matchReport("e2e-uuid-3", "e2e-uuid-4")
+		beyond["duration_seconds"] = 603
+		status, envelope = doJSON(t, env, http.MethodPost, "/api/matches", reporterToken, beyond)
+		if status != http.StatusBadRequest || envelope["code"] != "mca_report_inconsistent" {
+			t.Fatalf("超容差 duration status/code = %d/%v, want 400/mca_report_inconsistent", status, envelope["code"])
+		}
+		skipped := matchReport("e2e-uuid-3", "e2e-uuid-4")
+		skipped["duration_seconds"] = 0
+		status, envelope = doJSON(t, env, http.MethodPost, "/api/matches", reporterToken, skipped)
+		if status != http.StatusCreated {
+			t.Fatalf("duration 0 应跳过比对 status = %d, want 201 (body=%v)", status, envelope)
 		}
 	})
 

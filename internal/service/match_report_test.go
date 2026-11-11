@@ -2,6 +2,7 @@ package service_test
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -104,7 +105,7 @@ func TestReportWinLoseUnified(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
-	svc := service.NewMatchService(db, newReportFakeHRPAuth(t), nil)
+	svc := service.NewMatchService(db, newReportFakeHRPAuth(t), nil, 2)
 
 	mock.ExpectBegin()
 	expectCurrentSeason(mock)
@@ -170,7 +171,7 @@ func TestReportCompatShape(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
-	svc := service.NewMatchService(db, newReportFakeHRPAuth(t), nil)
+	svc := service.NewMatchService(db, newReportFakeHRPAuth(t), nil, 2)
 
 	in := service.TeamReportInput{
 		MatchType: "1v1",
@@ -224,7 +225,7 @@ func TestReportDrawUnified(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
-	svc := service.NewMatchService(db, newReportFakeHRPAuth(t), nil)
+	svc := service.NewMatchService(db, newReportFakeHRPAuth(t), nil, 2)
 
 	in := winLoseReport()
 	in.Teams[0].Result = service.ResultDraw
@@ -280,7 +281,7 @@ func TestReportScorePerfColumnsWritten(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
-	svc := service.NewMatchService(db, newReportFakeHRPAuth(t), nil)
+	svc := service.NewMatchService(db, newReportFakeHRPAuth(t), nil, 2)
 
 	in := service.TeamReportInput{
 		MatchType: "1v1",
@@ -336,7 +337,7 @@ func TestReportValidation(t *testing.T) {
 		t.Fatalf("sqlmock: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	svc := service.NewMatchService(db, newReportFakeHRPAuth(t), nil)
+	svc := service.NewMatchService(db, newReportFakeHRPAuth(t), nil, 2)
 
 	cases := []struct {
 		name     string
@@ -388,6 +389,111 @@ func TestReportValidation(t *testing.T) {
 	}
 }
 
+// TestReportDurationTolerance 覆盖 duration 容差校验（契约 1.13.0，
+// 缺省 ±2 秒）：容差内与边界接受、超界拒绝；容差 0 退回严格相等；
+// 0 跳过比对。时间戳跨度固定 600 秒（winLoseReport）。
+func TestReportDurationTolerance(t *testing.T) {
+	// settleExpectations 登记 1v1 胜负局完整结算期望（双方 0 分，
+	// duration 参数随用例变化）。
+	settleExpectations := func(mock sqlmock.Sqlmock, duration int) {
+		mock.ExpectBegin()
+		expectCurrentSeason(mock)
+		mock.ExpectQuery(`SELECT rank_score, wins_count FROM users WHERE uid = \? AND deleted_at IS NULL`).
+			WithArgs(int64(7)).
+			WillReturnRows(sqlmock.NewRows([]string{"rank_score", "wins_count"}).AddRow(0, 0))
+		mock.ExpectQuery(`SELECT rank_score, wins_count FROM users WHERE uid = \? AND deleted_at IS NULL`).
+			WithArgs(int64(8)).
+			WillReturnRows(sqlmock.NewRows([]string{"rank_score", "wins_count"}).AddRow(0, 0))
+		mock.ExpectExec(`INSERT INTO matches`).
+			WithArgs("1v1", service.MatchSourceGame, "", "", nil, nil, nil, "A", 1.0,
+				0, 0, 1.0, 1.0, duration,
+				time.Date(2026, 11, 6, 10, 0, 0, 0, time.UTC),
+				time.Date(2026, 11, 6, 10, 10, 0, 0, time.UTC)).
+			WillReturnResult(sqlmock.NewResult(1, 1))
+		expectStreak(mock, 7)
+		expectStreak(mock, 8)
+		expectPlayerWrites(mock, 7, 325)
+		expectPlayerWrites(mock, 8, -325)
+		mock.ExpectCommit()
+	}
+	reportWith := func(duration int) service.TeamReportInput {
+		in := winLoseReport()
+		in.DurationSeconds = duration
+		return in
+	}
+
+	// 容差内（±1）与边界（±2）接受。
+	for _, duration := range []int{601, 602, 599, 598} {
+		t.Run(fmt.Sprintf("within tolerance %d", duration), func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			if err != nil {
+				t.Fatalf("sqlmock: %v", err)
+			}
+			t.Cleanup(func() { _ = db.Close() })
+			svc := service.NewMatchService(db, newReportFakeHRPAuth(t), nil, 2)
+			settleExpectations(mock, duration)
+			if _, _, err := svc.Report(t.Context(), 1, reportWith(duration)); err != nil {
+				t.Fatalf("duration %d 应被接受（容差 2）: %v", duration, err)
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatalf("unmet expectations: %v", err)
+			}
+		})
+	}
+
+	// 超界（±3）拒绝，不触库。
+	for _, duration := range []int{603, 597} {
+		t.Run(fmt.Sprintf("beyond tolerance %d", duration), func(t *testing.T) {
+			db, _, err := sqlmock.New()
+			if err != nil {
+				t.Fatalf("sqlmock: %v", err)
+			}
+			t.Cleanup(func() { _ = db.Close() })
+			svc := service.NewMatchService(db, newReportFakeHRPAuth(t), nil, 2)
+			_, _, err = svc.Report(t.Context(), 1, reportWith(duration))
+			var ae *apperr.Error
+			if !errors.As(err, &ae) || ae.Code != apperr.CodeMCAReportInconsistent {
+				t.Fatalf("err = %v, want mca_report_inconsistent", err)
+			}
+			if ae.HTTPStatus() != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400", ae.HTTPStatus())
+			}
+		})
+	}
+
+	// 容差 0 = 严格相等（1.13.0 前的行为）：差 1 秒即拒。
+	t.Run("zero tolerance is strict", func(t *testing.T) {
+		db, _, err := sqlmock.New()
+		if err != nil {
+			t.Fatalf("sqlmock: %v", err)
+		}
+		t.Cleanup(func() { _ = db.Close() })
+		svc := service.NewMatchService(db, newReportFakeHRPAuth(t), nil, 0)
+		_, _, err = svc.Report(t.Context(), 1, reportWith(601))
+		var ae *apperr.Error
+		if !errors.As(err, &ae) || ae.Code != apperr.CodeMCAReportInconsistent {
+			t.Fatalf("err = %v, want mca_report_inconsistent（容差 0 应严格相等）", err)
+		}
+	})
+
+	// 0 跳过比对（保持既有语义）。
+	t.Run("zero duration skips comparison", func(t *testing.T) {
+		db, mock, err := sqlmock.New()
+		if err != nil {
+			t.Fatalf("sqlmock: %v", err)
+		}
+		t.Cleanup(func() { _ = db.Close() })
+		svc := service.NewMatchService(db, newReportFakeHRPAuth(t), nil, 2)
+		settleExpectations(mock, 0)
+		if _, _, err := svc.Report(t.Context(), 1, reportWith(0)); err != nil {
+			t.Fatalf("duration 0 应跳过比对: %v", err)
+		}
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Fatalf("unmet expectations: %v", err)
+		}
+	})
+}
+
 // TestReportGameIDConflict 覆盖 game_id 幂等冲突：同一 game_id 已存在
 // 且载荷哈希不一致 → 409 mca_game_id_conflict，不进入结算事务。
 func TestReportGameIDConflict(t *testing.T) {
@@ -396,7 +502,7 @@ func TestReportGameIDConflict(t *testing.T) {
 		t.Fatalf("sqlmock: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	svc := service.NewMatchService(db, newReportFakeHRPAuth(t), nil)
+	svc := service.NewMatchService(db, newReportFakeHRPAuth(t), nil, 2)
 
 	in := winLoseReport()
 	in.GameID = "game-1"
@@ -442,7 +548,7 @@ func TestReportPartySharing(t *testing.T) {
 		t.Fatalf("sqlmock: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	svc := service.NewMatchService(db, newReportFakeHRPAuth(t), nil)
+	svc := service.NewMatchService(db, newReportFakeHRPAuth(t), nil, 2)
 
 	in := service.TeamReportInput{
 		MatchType: "2v2",

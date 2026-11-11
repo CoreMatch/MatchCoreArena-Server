@@ -1,7 +1,7 @@
 # MatchCoreArena-Server 应用配置模板
 # 复制为 config.yaml 后按需修改；版本变更由 config 包自动迁移。
 
-version: "1.12.0"
+version: "1.13.0"
 
 server:
   host: "0.0.0.0"
@@ -102,3 +102,10 @@ ranking:
   #     min_score: 0
   #   - name: "白银"
   #     min_score: 1000
+
+# 对局上报校验配置（契约 1.13.0）。
+report:
+  # 正数 duration_seconds 与 finished_at-started_at 之差的容差（秒）：
+  # 差值在 ±容差内仍接受，超出按自相矛盾拒绝（400）。
+  # 0/缺省按默认 2 秒（1.13.0 前为严格相等）。
+  duration_tolerance_seconds: 2

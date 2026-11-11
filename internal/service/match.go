@@ -169,14 +169,19 @@ type matchService struct {
 	db         *sql.DB
 	authClient *auth.Client
 	redis      *goredis.Client
+	// durationTolerance 正数 duration_seconds 与时间戳跨度之差的容差
+	//（秒，契约 1.13.0；配置 report.duration_tolerance_seconds，缺省 2）。
+	durationTolerance int
 }
 
-// NewMatchService 创建 MatchService 实例。
-func NewMatchService(db *sql.DB, authClient *auth.Client, redis *goredis.Client) MatchService {
+// NewMatchService 创建 MatchService 实例。durationTolerance 为 duration
+// 一致性容差（秒）。
+func NewMatchService(db *sql.DB, authClient *auth.Client, redis *goredis.Client, durationTolerance int) MatchService {
 	return &matchService{
-		db:         db,
-		authClient: authClient,
-		redis:      redis,
+		db:                db,
+		authClient:        authClient,
+		redis:             redis,
+		durationTolerance: durationTolerance,
 	}
 }
 
@@ -414,10 +419,20 @@ func (s *matchService) Report(ctx context.Context, reporterUID int64, in TeamRep
 	if err != nil {
 		return nil, false, err
 	}
-	// 与上报方前端校验同口径：提供了时长则必须与起止时刻差一致。
-	if in.DurationSeconds > 0 && int64(in.DurationSeconds) != int64(finishedAt.Sub(startedAt)/time.Second) {
-		return nil, false, apperr.New(apperr.CodeMCAReportInconsistent,
-			"duration_seconds 与 finished_at - started_at 不一致")
+	// duration 一致性（与上报方前端校验同口径；契约 1.13.0 起为容差
+	// 校验，缺省 ±2 秒；此前为严格相等）。保持既有语义：≤0 跳过比对
+	//（负数已在 validateTeams 拒绝）；payloadHash 与 game_id 幂等逻辑
+	// 不受影响。
+	if in.DurationSeconds > 0 {
+		diff := int64(in.DurationSeconds) - int64(finishedAt.Sub(startedAt)/time.Second)
+		if diff < 0 {
+			diff = -diff
+		}
+		if diff > int64(s.durationTolerance) {
+			return nil, false, apperr.New(apperr.CodeMCAReportInconsistent,
+				fmt.Sprintf("duration_seconds 与 finished_at - started_at 相差 %d 秒，超出容差 %d 秒",
+					diff, s.durationTolerance))
+		}
 	}
 
 	source := in.Source

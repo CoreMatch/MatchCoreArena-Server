@@ -130,7 +130,7 @@ func TestReportLazyProvisioning(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 
 	cli := newFakeHRPAuth(t)
-	svc := service.NewMatchService(db, cli, nil) // redis=nil：强制走 HRPAuth 解析
+	svc := service.NewMatchService(db, cli, nil, 2) // redis=nil：强制走 HRPAuth 解析
 
 	mock.ExpectBegin()
 	expectCurrentSeason(mock)
@@ -179,7 +179,7 @@ func TestReportProvisioningIdempotent(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 
 	cli := newFakeHRPAuth(t)
-	svc := service.NewMatchService(db, cli, nil)
+	svc := service.NewMatchService(db, cli, nil, 2)
 
 	mock.ExpectBegin()
 	expectCurrentSeason(mock)
@@ -211,7 +211,7 @@ func TestReportProvisioningImpossible(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 
 	cli := newFakeHRPAuth(t)
-	svc := service.NewMatchService(db, cli, nil)
+	svc := service.NewMatchService(db, cli, nil, 2)
 
 	mock.ExpectBegin()
 	expectCurrentSeason(mock)

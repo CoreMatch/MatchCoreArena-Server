@@ -27,7 +27,7 @@ import (
 //  1. 将 CurrentVersion 提升到新版本；
 //  2. 在 migrations 列表中追加对应的迁移函数；
 //  3. 在 config.example.yaml 中同步更新。
-const CurrentVersion = "1.12.0"
+const CurrentVersion = "1.13.0"
 
 // AppConfig 应用配置根结构。
 type AppConfig struct {
@@ -38,6 +38,16 @@ type AppConfig struct {
 	Auth        AuthConfig        `yaml:"auth"`
 	Matchmaking MatchmakingConfig `yaml:"matchmaking"`
 	Ranking     RankingConfig     `yaml:"ranking"`
+	Report      ReportConfig      `yaml:"report"`
+}
+
+// ReportConfig 对局上报校验配置（契约 1.13.0）。
+type ReportConfig struct {
+	// DurationToleranceSeconds 正数 duration_seconds 与
+	// finished_at-started_at 之差的容差（秒）：差值在 ±容差内仍接受，
+	// 超出按自相矛盾拒绝（400 mca_report_inconsistent）。
+	// 0/未配置按缺省 2 秒（1.13.0 前为严格相等）。
+	DurationToleranceSeconds int `yaml:"duration_tolerance_seconds"`
 }
 
 // RankingConfig 排行榜展示配置（纯展示，不参与结算、不引入赛季）。
@@ -431,6 +441,23 @@ var migrations = []migration{
 			return in, nil
 		},
 	},
+	{
+		from: "1.12.0",
+		to:   "1.13.0",
+		run: func(in rawConfig) (rawConfig, error) {
+			// 新增 report.duration_tolerance_seconds（duration 一致性容差，
+			// 契约 1.13.0）。缺省注入默认值 2s（此前为严格相等）。
+			report, _ := in["report"].(map[string]any)
+			if report == nil {
+				report = map[string]any{}
+			}
+			if _, ok := report["duration_tolerance_seconds"]; !ok {
+				report["duration_tolerance_seconds"] = 2
+			}
+			in["report"] = report
+			return in, nil
+		},
+	},
 }
 
 // Load 从指定路径加载配置文件，并完成版本校验/迁移，最终反序列化为 AppConfig。
@@ -551,6 +578,13 @@ func validate(cfg *AppConfig) error {
 	// Auth 校验（1.2.0+）
 	if cfg.Auth.HRPAuth.BaseURL == "" {
 		return errors.New("auth.hrpauth.base_url 必填")
+	}
+	// Report 校验（1.13.0）：容差缺省 2 秒（旧配置无此键时不拒绝启动）。
+	if cfg.Report.DurationToleranceSeconds < 0 {
+		return errors.New("report.duration_tolerance_seconds 不能为负数")
+	}
+	if cfg.Report.DurationToleranceSeconds == 0 {
+		cfg.Report.DurationToleranceSeconds = 2
 	}
 	// Matchmaking 校验（1.6.0+）
 	// 邀请 TTL（1.11.0）：旧配置无此键，缺省按 300 秒，不拒绝启动。
@@ -716,6 +750,9 @@ func createDefaultConfig(path string) error {
 				{MatchType: "1v1", TeamSizes: []int{1, 1}},
 				{MatchType: "2v2", TeamSizes: []int{2, 2}},
 			},
+		},
+		Report: ReportConfig{
+			DurationToleranceSeconds: 2,
 		},
 	}
 

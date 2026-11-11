@@ -670,6 +670,58 @@ matchmaking:
 	}
 }
 
+// TestLoad_Migrates1120To1130 覆盖 1.12.0 配置的兼容迁移：无 report 段
+// 的旧配置自动注入 duration 容差缺省 2 秒（契约 1.13.0），不拒绝启动。
+func TestLoad_Migrates1120To1130(t *testing.T) {
+	base := `version: "1.12.0"
+server:
+  host: "127.0.0.1"
+  port: 9178
+database:
+  host: "localhost"
+  port: 3306
+  user: "u"
+  password: "p"
+  name: "d"
+redis:
+  host: "localhost"
+  port: 6379
+auth:
+  hrpauth:
+    base_url: "http://localhost:2778"
+  maintenance_token: "t"
+matchmaking:
+  enabled: true
+  tick_seconds: 1
+  queue_timeout_seconds: 300
+  base_rating_window: 200
+  rating_window_growth_per_minute: 100
+  max_rating_window: 1000
+  assignment_ttl_seconds: 1800
+  room_reservation_ttl_seconds: 900
+  party_invite_ttl_seconds: 300
+  modes:
+    - match_type: "1v1"
+      team_sizes: [1, 1]
+`
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "config.yaml")
+	if err := os.WriteFile(path, []byte(base), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("1.12.0 配置应能迁移加载: %v", err)
+	}
+	if cfg.Version != CurrentVersion {
+		t.Errorf("版本号不匹配: 期望 %s, 实际 %s", CurrentVersion, cfg.Version)
+	}
+	if cfg.Report.DurationToleranceSeconds != 2 {
+		t.Errorf("duration_tolerance_seconds = %d, want 2（缺省兼容值）",
+			cfg.Report.DurationToleranceSeconds)
+	}
+}
+
 // TestLoad_RoomInventoryValidation 覆盖房间清单的启动校验：
 // 合法清单通过；空清单/重复子服/重复房间/空房间列表/非法地址一律拒绝。
 func TestLoad_RoomInventoryValidation(t *testing.T) {

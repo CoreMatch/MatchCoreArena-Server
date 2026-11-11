@@ -27,7 +27,9 @@ rejected.
   [0, initial_count], negative kills/deaths/survival_time/duration,
   `perf_tweak` outside [0.95, 1.05] (parity with the ops panel's client-side
   validation; no silent clamping), `finished_at` before `started_at`, and a
-  positive `duration_seconds` that disagrees with the timestamp difference.
+  positive `duration_seconds` that disagrees with the timestamp difference
+  by more than the configured tolerance (`report.duration_tolerance_seconds`,
+  default ±2s since contract 1.13.0; strict equality before).
   Structural gaps (missing teams/members, bad formats) remain
   `mca_invalid_request`.
 - Handler-level outcomes feed the metrics registry (0013): success,
