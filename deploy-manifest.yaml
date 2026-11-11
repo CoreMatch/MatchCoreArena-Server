@@ -82,3 +82,13 @@ baremetal:
 
 container:
   enabled: false
+  # 容器形态镜像：已真实发布（Docker Hub，build → push → 回拉 → 挂回
+  # compose 平台冒烟全过，/api/status 上报 1.11.0）。digest 为生效引用，
+  # tag 仅可读别名。注意容器形态必须独占数据库（compose 以 MCA_DB_NAME
+  # 覆盖 DB_NAME，见 Deployer deploy/docker-compose.yml）。
+  # 注：Deployer 运行时的 registry 鉴权拉取本阶段未实现，此段为部署声明。
+  image:
+    source: registry
+    repo: limeight/ha-mca-server
+    tag: "1.11.0-073d17c"
+    digest: "sha256:3f0b6eed54c6d48090dd8b8911c2a41bd1c0621c267fa889ecf3437e9042e24c"
