@@ -38,4 +38,4 @@ local settings.
 - internal/service/matchmaking.go::attachJoinTarget — read-time attachment to formed groups
 - internal/service/matchmaking.go::Status — status response enrichment
 - test/e2e/e2e_test.go::TestMatchCoreE2E — formed group carries configured join_target end-to-end
-- Cross-repo (read-only): /home/lnb/Desktop/HA/MatchCoreArena-Client/internal/interop/interop.go::JoinTarget — client-side shape; /home/lnb/Desktop/HA/MatchCoreArena-Client/knowledge/0012-match-handoff-sender-interop-spec-v1.md — local-config fallback behavior
+- Cross-repo (read-only): /home/lnb/Desktop/HA/matchcore/MatchCoreArena-Client/internal/interop/interop.go::JoinTarget — client-side shape; /home/lnb/Desktop/HA/matchcore/MatchCoreArena-Client/knowledge/0012-match-handoff-sender-interop-spec-v1.md — local-config fallback behavior

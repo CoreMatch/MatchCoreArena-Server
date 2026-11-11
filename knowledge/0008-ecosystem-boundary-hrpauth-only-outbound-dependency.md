@@ -56,4 +56,4 @@ Dependency boundary (all checks are repository-wide searches):
 - Repository-wide case-insensitive search: `yggdrasil` → 0 hits in code/config; `skinlib`/`skinproxy` → 0 hits; `bs2ha`/`deployer` → 0 hits
 - api/router.go::Register (`POST /api/maintenance/sql`, `POST /api/matches`)
 - Cross-references: 0002 (reporter integration), 0003 (identity via HRPAuth), 0004 (no Minecraft runtime)
-- HRPAuth default port 2778 confirmed in the HRPAuth repository (read-only): /home/lnb/Desktop/HA/HRPAuth/controllers/startup_controller.go::buildDefaultConfig
+- HRPAuth default port 2778 confirmed in the HRPAuth repository (read-only): /home/lnb/Desktop/HA/hrpauth/HRPAuth/controllers/startup_controller.go::buildDefaultConfig
