@@ -91,5 +91,5 @@ container:
   image:
     source: registry
     repo: limeight/ha-mca-server
-    tag: "1.11.0-699d7bf"
+    tag: "1.11.0-e40339d"
     digest: "sha256:4b45285991bdcc7a1ff1f76d744575be62531afdc1ba2736beeafb023893b99c"
