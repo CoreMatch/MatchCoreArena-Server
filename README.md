@@ -1,5 +1,7 @@
 # MatchCoreArena-Server
 
+> 跑 E2E 闭环：`./test/e2e/run-e2e.sh`（一键起 MariaDB + 跑 e2e + 清理）
+
 Matchmaking and settlement core service of the MatchCoreArena ecosystem:
 a standalone Go/Gin HTTP service (no Minecraft server runtime dependency).
 Design decisions live in [`knowledge/`](knowledge/README.md); the outward
