@@ -1,5 +1,5 @@
 # MatchCoreArena-Server 部署声明（deploy-manifest v1）
-# schema 依据：HA-Services-Deployer internal/manifest/（SchemaVersion=1）
+# schema 依据：HA-Cupbearer internal/manifest/（SchemaVersion=1）
 manifest_version: 1
 kind: service
 project: mca-server
@@ -64,7 +64,7 @@ facts:
     # config/config.go Load：默认路径 config/config.yaml（CONFIG_PATH 可覆盖）；
     # 生产在位 /www/wwwroot/mca/config/config.yaml（PROD-UPGRADE §10-1）。
     # 模板版本 = 模板首行 version: "1.11.0"（代码 CurrentVersion 同值；
-    # Deployer 模板已含 1.10.0/1.11.0 两个 TTL 键，装载不依赖内存迁移）。
+    # Cupbearer 模板已含 1.10.0/1.11.0 两个 TTL 键，装载不依赖内存迁移）。
     - path: config/config.yaml
       template_version: "1.11.0"
   static_assets: ""
@@ -86,8 +86,8 @@ container:
   # compose 平台冒烟全过，/api/status 上报 1.11.0）。镜像为 linux/amd64 +
   # linux/arm64 多架构 manifest list，digest 钉的是 manifest list 摘要
   #（非单平台子摘要），为生效引用，tag 仅可读别名。注意容器形态必须独占
-  # 数据库（compose 以 MCA_DB_NAME 覆盖 DB_NAME，见 Deployer deploy/docker-compose.yml）。
-  # 部署时 Deployer 按 digest 优先真实拉取本镜像（鉴权沿用宿主 docker 登录态；拉后摘要对照不符即响亮失败）。
+  # 数据库（compose 以 MCA_DB_NAME 覆盖 DB_NAME，见 Cupbearer deploy/docker-compose.yml）。
+  # 部署时 Cupbearer 按 digest 优先真实拉取本镜像（鉴权沿用宿主 docker 登录态；拉后摘要对照不符即响亮失败）。
   image:
     source: registry
     repo: limeight/ha-mca-server
