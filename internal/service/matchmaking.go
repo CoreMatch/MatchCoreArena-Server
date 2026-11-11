@@ -96,6 +96,29 @@ type MatchAssignment struct {
 // AssignmentReasonNoRoom 有效成局但无法提供房间（预占过期/清单变更）。
 const AssignmentReasonNoRoom = "no_room_available"
 
+// 组队邀请状态（契约 1.11.0 同意机制）。expired 不落库：pending 行超过
+// expires_at 后由读取方惰性判定（无后台清扫）。
+const (
+	InviteStatusPending  = "pending"
+	InviteStatusAccepted = "accepted"
+	InviteStatusRejected = "rejected"
+	InviteStatusExpired  = "expired"
+)
+
+// PartyInvite 组队邀请（组队入队的同意凭证）。字段形态与契约
+// matchcorearena-business.yaml 1.11.0 的 PartyInvite schema 对齐。
+type PartyInvite struct {
+	ID         int64  `json:"id"`
+	InviterUID int64  `json:"inviter_uid"`
+	InviteeUID int64  `json:"invitee_uid"`
+	MatchType  string `json:"match_type"`
+	Status     string `json:"status"` // pending/accepted/rejected/expired（过期为读取时的有效态）
+	CreatedAt  string `json:"created_at"`
+	ExpiresAt  string `json:"expires_at"`
+	ResolvedAt string `json:"resolved_at,omitempty"` // 接受/拒绝时间
+	ConsumedAt string `json:"consumed_at,omitempty"` // 被组队入队消费的时间
+}
+
 // MatchmakingService 匹配业务接口。
 type MatchmakingService interface {
 	// Join 加入匹配队列。partyMembers 为成员 UUID 列表（与运维台字段
@@ -112,6 +135,17 @@ type MatchmakingService interface {
 	Assignment(ctx context.Context, uuid string) (*MatchAssignment, error)
 	// QueueDepth 按模式统计队列深度（可观测性用）。
 	QueueDepth(ctx context.Context) (map[string]int64, error)
+	// Invite 向成员 UUID 列表发出组队邀请（契约 1.11.0 同意机制）：
+	// 只建 pending 邀请，不入队；名单不得含调用者本人。
+	Invite(ctx context.Context, callerUID int64, matchType string, memberUUIDs []string) ([]*PartyInvite, error)
+	// MyInvites 列出本人相关（发出或收到）的邀请，新到旧，至多 50 条；
+	// 过期的 pending 邀请以 expired 有效态返回。
+	MyInvites(ctx context.Context, uid int64) ([]*PartyInvite, error)
+	// AcceptInvite 被邀请人接受邀请（终态）；仅受邀人可操作，过期/
+	// 已终态的邀请分别以类型化错误拒绝。
+	AcceptInvite(ctx context.Context, uid int64, inviteID int64) (*PartyInvite, error)
+	// RejectInvite 被邀请人拒绝邀请（终态）；错误面与 AcceptInvite 相同。
+	RejectInvite(ctx context.Context, uid int64, inviteID int64) (*PartyInvite, error)
 }
 
 type matchmakingService struct {
@@ -156,7 +190,7 @@ func (s *matchmakingService) Join(ctx context.Context, uid int64, matchType stri
 	}
 
 	if len(partyMembers) > 0 {
-		return s.joinAsParty(ctx, mode, partyMembers)
+		return s.joinAsParty(ctx, uid, mode, partyMembers)
 	}
 
 	if in, _, err := s.partyOf(ctx, uid); err != nil {
@@ -177,9 +211,10 @@ func (s *matchmakingService) Join(ctx context.Context, uid int64, matchType stri
 	return []*QueueEntry{entry}, nil
 }
 
-// joinAsParty 以队伍为单位整体入队（事务）：解析成员 UUID、建立临时
-// 队伍、全队写入队列。临时队伍在成局或整队离队时清理。
-func (s *matchmakingService) joinAsParty(ctx context.Context, mode config.MatchMode, members []string) ([]*QueueEntry, error) {
+// joinAsParty 以队伍为单位整体入队（事务）：解析成员 UUID、校验同意
+//（契约 1.11.0）、建立临时队伍、全队写入队列、消费用掉的邀请同意。
+// 临时队伍在成局或整队离队时清理。
+func (s *matchmakingService) joinAsParty(ctx context.Context, callerUID int64, mode config.MatchMode, members []string) ([]*QueueEntry, error) {
 	if len(members) < 2 {
 		return nil, apperr.New(apperr.CodeMCAInvalidRequest, "party_members 至少需要 2 名成员")
 	}
@@ -216,6 +251,44 @@ func (s *matchmakingService) joinAsParty(ctx context.Context, mode config.MatchM
 			}
 		}
 		uids = append(uids, memberUID)
+	}
+
+	// 同意机制（契约 1.11.0，默认拒绝）：
+	// 1) 调用者必须在名单内——否则任何人都能把他人拉进队列动其评分；
+	// 2) 其余成员必须已接受调用者对本模式的邀请（accepted、未过期、
+	//    未消费）；入队事务内消费这些同意。
+	callerInRoster := false
+	for _, memberUID := range uids {
+		if memberUID == callerUID {
+			callerInRoster = true
+			break
+		}
+	}
+	if !callerInRoster {
+		return nil, apperr.New(apperr.CodeMCACallerNotInRoster,
+			"party_members 必须包含调用者本人的 UUID")
+	}
+	consumeIDs := make([]int64, 0, len(uids)-1)
+	for _, memberUID := range uids {
+		if memberUID == callerUID {
+			continue
+		}
+		var inviteID int64
+		err := s.db.QueryRowContext(ctx,
+			`SELECT id FROM matchmaking_party_invites
+			 WHERE inviter_uid = ? AND invitee_uid = ? AND match_type = ?
+			   AND status = ? AND consumed_at IS NULL AND expires_at > NOW()
+			 ORDER BY resolved_at DESC LIMIT 1`,
+			callerUID, memberUID, mode.MatchType, InviteStatusAccepted,
+		).Scan(&inviteID)
+		if err == sql.ErrNoRows {
+			return nil, apperr.New(apperr.CodeMCAConsentMissing,
+				fmt.Sprintf("成员 (uid: %d) 未接受组队邀请——须先经 /api/matchmaking/invites 邀请并由本人接受", memberUID))
+		}
+		if err != nil {
+			return nil, fmt.Errorf("查询组队同意失败 (uid: %d): %w", memberUID, err)
+		}
+		consumeIDs = append(consumeIDs, inviteID)
 	}
 
 	// 成员不得已在其他队伍中（队伍入队期间必然在队）。
@@ -273,12 +346,223 @@ func (s *matchmakingService) joinAsParty(ctx context.Context, mode config.MatchM
 		entries = append(entries, &QueueEntry{UID: memberUID, MatchType: mode.MatchType, RankScore: score, PartyID: partyID})
 	}
 
+	// 消费本次入队用到的邀请同意（同事务：入队失败则不消费）。
+	for _, inviteID := range consumeIDs {
+		if _, err := tx.ExecContext(ctx,
+			"UPDATE matchmaking_party_invites SET consumed_at = NOW() WHERE id = ? AND consumed_at IS NULL",
+			inviteID,
+		); err != nil {
+			return nil, fmt.Errorf("消费组队同意失败 (invite: %d): %w", inviteID, err)
+		}
+	}
+
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("提交事务失败: %w", err)
 	}
 	metrics.Default.Inc(metrics.PartiesCreatedTotal, 1)
 	metrics.Default.Inc(metrics.MatchmakingJoinTotal, int64(len(entries)))
 	return entries, nil
+}
+
+// inviteColumns 邀请查询的统一列序（scan 与之一致）。
+const inviteColumns = `id, inviter_uid, invitee_uid, match_type, status,
+	created_at, expires_at, resolved_at, consumed_at`
+
+// scanInvite 扫描一行邀请；过期惰性判定——pending 且已过 expires_at
+// 的以 expired 有效态返回（不落库、无后台清扫）。
+func scanInvite(scanner interface {
+	Scan(dest ...any) error
+}, now time.Time) (*PartyInvite, error) {
+	var inv PartyInvite
+	var resolvedAt, consumedAt sql.NullString
+	if err := scanner.Scan(&inv.ID, &inv.InviterUID, &inv.InviteeUID, &inv.MatchType,
+		&inv.Status, &inv.CreatedAt, &inv.ExpiresAt, &resolvedAt, &consumedAt); err != nil {
+		return nil, err
+	}
+	inv.ResolvedAt = resolvedAt.String
+	inv.ConsumedAt = consumedAt.String
+	if inv.Status == InviteStatusPending {
+		if expiresAt, perr := parseDBTime(inv.ExpiresAt); perr == nil && !expiresAt.After(now) {
+			inv.Status = InviteStatusExpired
+		}
+	}
+	return &inv, nil
+}
+
+// parseDBTime 解析 MySQL TIMESTAMP 扫描出的字符串（parseTime 驱动的
+// 常见格式），用于过期判定。
+func parseDBTime(s string) (time.Time, error) {
+	for _, layout := range []string{"2006-01-02 15:04:05", time.RFC3339} {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t, nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("无法解析时间: %q", s)
+}
+
+// Invite 发出组队邀请（只建 pending 邀请，不入队）。
+func (s *matchmakingService) Invite(ctx context.Context, callerUID int64, matchType string, memberUUIDs []string) ([]*PartyInvite, error) {
+	if !s.cfg.Enabled {
+		return nil, apperr.New(apperr.CodeMCAInvalidRequest, "匹配系统未启用")
+	}
+	mode, ok := s.cfg.FindMode(matchType)
+	if !ok {
+		return nil, apperr.New(apperr.CodeMCAInvalidRequest,
+			fmt.Sprintf("未知匹配模式: %s", matchType))
+	}
+	if len(memberUUIDs) == 0 {
+		return nil, apperr.New(apperr.CodeMCAInvalidRequest, "member_uuids 至少需要 1 名成员")
+	}
+	seenUUID := make(map[string]bool, len(memberUUIDs))
+	for _, uuid := range memberUUIDs {
+		if uuid == "" {
+			return nil, apperr.New(apperr.CodeMCAInvalidRequest, "member_uuids 含空 UUID")
+		}
+		if seenUUID[uuid] {
+			return nil, apperr.New(apperr.CodeMCAInvalidRequest,
+				fmt.Sprintf("member_uuids 含重复成员: %s", uuid))
+		}
+		seenUUID[uuid] = true
+	}
+
+	// 解析成员身份（与对局上报同一信任边界），并拒绝邀请自己。
+	uids := make([]int64, 0, len(memberUUIDs))
+	for _, uuid := range memberUUIDs {
+		memberUID, err := resolveUUID(ctx, s.authClient, s.redis, uuid)
+		if err != nil {
+			switch {
+			case errors.Is(err, auth.ErrUserNotFound):
+				return nil, apperr.New(apperr.CodeMCAUserNotFound,
+					fmt.Sprintf("受邀成员 (uuid: %s) 在 HRPAuth 中不存在", uuid))
+			case errors.Is(err, auth.ErrServiceAuth):
+				return nil, apperr.New(apperr.CodeOAuthHRPAuthDown,
+					"HRPAuth 服务凭据不可用，无法解析受邀成员身份")
+			default:
+				return nil, apperr.New(apperr.CodeOAuthHRPAuthDown,
+					fmt.Sprintf("解析受邀成员 (uuid: %s) 身份失败", uuid))
+			}
+		}
+		if memberUID == callerUID {
+			return nil, apperr.New(apperr.CodeMCAInvalidRequest,
+				"member_uuids 不得包含调用者本人的 UUID")
+		}
+		uids = append(uids, memberUID)
+	}
+
+	ttl := s.cfg.PartyInviteTTLSeconds
+	invites := make([]*PartyInvite, 0, len(uids))
+	for _, memberUID := range uids {
+		// 已有未过期的 pending 邀请 → 冲突，不重复发。
+		var existingID int64
+		err := s.db.QueryRowContext(ctx,
+			`SELECT id FROM matchmaking_party_invites
+			 WHERE inviter_uid = ? AND invitee_uid = ? AND match_type = ?
+			   AND status = ? AND expires_at > NOW() LIMIT 1`,
+			callerUID, memberUID, mode.MatchType, InviteStatusPending,
+		).Scan(&existingID)
+		if err == nil {
+			return nil, apperr.New(apperr.CodeMCAInviteExists,
+				fmt.Sprintf("对成员 (uid: %d) 已有模式 %s 的待处理邀请 (id: %d)", memberUID, mode.MatchType, existingID))
+		}
+		if err != sql.ErrNoRows {
+			return nil, fmt.Errorf("查询既有邀请失败 (uid: %d): %w", memberUID, err)
+		}
+
+		res, err := s.db.ExecContext(ctx,
+			`INSERT INTO matchmaking_party_invites (inviter_uid, invitee_uid, match_type, status, expires_at)
+			 VALUES (?, ?, ?, ?, DATE_ADD(NOW(), INTERVAL ? SECOND))`,
+			callerUID, memberUID, mode.MatchType, InviteStatusPending, ttl,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("写入组队邀请失败 (uid: %d): %w", memberUID, err)
+		}
+		inviteID, _ := res.LastInsertId()
+		inv, err := scanInvite(s.db.QueryRowContext(ctx,
+			"SELECT "+inviteColumns+" FROM matchmaking_party_invites WHERE id = ?", inviteID,
+		), time.Now())
+		if err != nil {
+			if err == sql.ErrNoRows {
+				return nil, fmt.Errorf("回读组队邀请失败 (id: %d)", inviteID)
+			}
+			return nil, fmt.Errorf("回读组队邀请失败 (id: %d): %w", inviteID, err)
+		}
+		invites = append(invites, inv)
+	}
+	return invites, nil
+}
+
+// MyInvites 列出本人相关的邀请（新到旧，至多 50 条）。
+func (s *matchmakingService) MyInvites(ctx context.Context, uid int64) ([]*PartyInvite, error) {
+	rows, err := s.db.QueryContext(ctx,
+		"SELECT "+inviteColumns+` FROM matchmaking_party_invites
+		 WHERE inviter_uid = ? OR invitee_uid = ?
+		 ORDER BY id DESC LIMIT 50`, uid, uid)
+	if err != nil {
+		return nil, fmt.Errorf("查询组队邀请失败: %w", err)
+	}
+	defer rows.Close()
+	now := time.Now()
+	invites := make([]*PartyInvite, 0, 8)
+	for rows.Next() {
+		inv, err := scanInvite(rows, now)
+		if err != nil {
+			return nil, fmt.Errorf("读取组队邀请失败: %w", err)
+		}
+		invites = append(invites, inv)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("读取组队邀请失败: %w", err)
+	}
+	return invites, nil
+}
+
+// AcceptInvite 接受邀请（终态）。
+func (s *matchmakingService) AcceptInvite(ctx context.Context, uid int64, inviteID int64) (*PartyInvite, error) {
+	return s.resolveInviteTransition(ctx, uid, inviteID, InviteStatusAccepted)
+}
+
+// RejectInvite 拒绝邀请（终态）。
+func (s *matchmakingService) RejectInvite(ctx context.Context, uid int64, inviteID int64) (*PartyInvite, error) {
+	return s.resolveInviteTransition(ctx, uid, inviteID, InviteStatusRejected)
+}
+
+// resolveInviteTransition 执行邀请的接受/拒绝状态迁移：
+// 不存在 → 404；非受邀人 → 403；已终态 → 409 resolved；已过期 → 409 expired。
+func (s *matchmakingService) resolveInviteTransition(ctx context.Context, uid int64, inviteID int64, target string) (*PartyInvite, error) {
+	var inviteeUID int64
+	var status, expiresAt string
+	err := s.db.QueryRowContext(ctx,
+		"SELECT inviter_uid, invitee_uid, match_type, status, expires_at FROM matchmaking_party_invites WHERE id = ?",
+		inviteID,
+	).Scan(new(int64), &inviteeUID, new(string), &status, &expiresAt)
+	if err == sql.ErrNoRows {
+		return nil, apperr.New(apperr.CodeMCAInviteNotFound,
+			fmt.Sprintf("组队邀请 (id: %d) 不存在", inviteID))
+	}
+	if err != nil {
+		return nil, fmt.Errorf("查询组队邀请失败 (id: %d): %w", inviteID, err)
+	}
+	if inviteeUID != uid {
+		return nil, apperr.New(apperr.CodeMCANotInvitee,
+			"只有受邀人本人可以接受/拒绝该邀请")
+	}
+	if status != InviteStatusPending {
+		return nil, apperr.New(apperr.CodeMCAInviteResolved,
+			fmt.Sprintf("邀请 (id: %d) 已处于终态 %s", inviteID, status))
+	}
+	if exp, perr := parseDBTime(expiresAt); perr == nil && !exp.After(time.Now()) {
+		return nil, apperr.New(apperr.CodeMCAInviteExpired,
+			fmt.Sprintf("邀请 (id: %d) 已过期，请邀请人重新发起", inviteID))
+	}
+	if _, err := s.db.ExecContext(ctx,
+		"UPDATE matchmaking_party_invites SET status = ?, resolved_at = NOW() WHERE id = ?",
+		target, inviteID,
+	); err != nil {
+		return nil, fmt.Errorf("更新组队邀请失败 (id: %d): %w", inviteID, err)
+	}
+	return scanInvite(s.db.QueryRowContext(ctx,
+		"SELECT "+inviteColumns+" FROM matchmaking_party_invites WHERE id = ?", inviteID,
+	), time.Now())
 }
 
 // insertQueueEntry 写入单条队列记录并回读 enqueued_at。

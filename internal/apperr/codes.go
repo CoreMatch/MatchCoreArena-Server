@@ -45,6 +45,16 @@ const (
 	CodeMCAPartyAlreadyInParty Code = "mca_party_already_in_party"
 	CodeMCAPartyFull           Code = "mca_party_full"
 	CodeMCARankingNotFound     Code = "mca_ranking_not_found"
+	// 组队同意机制（契约 1.11.0）：调用者必须在名单内；其余成员必须
+	// 已接受邀请（默认拒绝）；邀请状态机 pending→accepted/rejected，
+	// 过期惰性判定。
+	CodeMCACallerNotInRoster Code = "mca_caller_not_in_roster"
+	CodeMCAConsentMissing    Code = "mca_consent_missing"
+	CodeMCAInviteNotFound    Code = "mca_invite_not_found"
+	CodeMCAInviteExists      Code = "mca_invite_exists"
+	CodeMCAInviteExpired     Code = "mca_invite_expired"
+	CodeMCAInviteResolved    Code = "mca_invite_resolved"
+	CodeMCANotInvitee        Code = "mca_not_invitee"
 )
 
 // codeHTTPMap 将错误码映射到建议 HTTP 状态码。
@@ -77,6 +87,13 @@ var codeHTTPMap = map[Code]int{
 	CodeMCAPartyAlreadyInParty: http.StatusConflict,
 	CodeMCAPartyFull:           http.StatusConflict,
 	CodeMCARankingNotFound:     http.StatusNotFound,
+	CodeMCACallerNotInRoster:   http.StatusBadRequest,
+	CodeMCAConsentMissing:      http.StatusConflict,
+	CodeMCAInviteNotFound:      http.StatusNotFound,
+	CodeMCAInviteExists:        http.StatusConflict,
+	CodeMCAInviteExpired:       http.StatusConflict,
+	CodeMCAInviteResolved:      http.StatusConflict,
+	CodeMCANotInvitee:          http.StatusForbidden,
 }
 
 // StatusFromCode 根据错误码返回建议 HTTP 状态码，未注册的码返回 500。

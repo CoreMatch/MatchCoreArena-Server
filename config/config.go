@@ -27,7 +27,7 @@ import (
 //  1. 将 CurrentVersion 提升到新版本；
 //  2. 在 migrations 列表中追加对应的迁移函数；
 //  3. 在 config.example.yaml 中同步更新。
-const CurrentVersion = "1.11.0"
+const CurrentVersion = "1.12.0"
 
 // AppConfig 应用配置根结构。
 type AppConfig struct {
@@ -75,6 +75,10 @@ type MatchmakingConfig struct {
 	// RoomReservationTTLSeconds 房间预占有效期（秒，契约 1.10.0）：
 	// 成局预占的房间超过该值未被结算消费即释放（引擎每轮清理）。
 	RoomReservationTTLSeconds int `yaml:"room_reservation_ttl_seconds"`
+	// PartyInviteTTLSeconds 组队邀请有效期（秒，契约 1.11.0 同意机制）：
+	// 邀请自创建起超过该值未接受即视为过期（读取/接受/入队时惰性判定，
+	// 无后台清扫）。未配置（0）时按默认 300 秒。
+	PartyInviteTTLSeconds int `yaml:"party_invite_ttl_seconds"`
 	// Servers 子服→房间静态清单。nil（未配置）= 不启用房间层，
 	// 显式空列表视为非法配置拒绝启动。
 	Servers    []MatchServer      `yaml:"servers,omitempty"`
@@ -413,6 +417,20 @@ var migrations = []migration{
 			return in, nil
 		},
 	},
+	{
+		from: "1.11.0",
+		to:   "1.12.0",
+		run: func(in rawConfig) (rawConfig, error) {
+			// 新增 matchmaking.party_invite_ttl_seconds（组队邀请有效期，
+			// 契约 1.11.0 同意机制）。缺省注入默认值 300s。
+			if mm, ok := in["matchmaking"].(map[string]any); ok {
+				if _, ok := mm["party_invite_ttl_seconds"]; !ok {
+					mm["party_invite_ttl_seconds"] = 300
+				}
+			}
+			return in, nil
+		},
+	},
 }
 
 // Load 从指定路径加载配置文件，并完成版本校验/迁移，最终反序列化为 AppConfig。
@@ -535,7 +553,14 @@ func validate(cfg *AppConfig) error {
 		return errors.New("auth.hrpauth.base_url 必填")
 	}
 	// Matchmaking 校验（1.6.0+）
+	// 邀请 TTL（1.11.0）：旧配置无此键，缺省按 300 秒，不拒绝启动。
+	if cfg.Matchmaking.PartyInviteTTLSeconds == 0 {
+		cfg.Matchmaking.PartyInviteTTLSeconds = 300
+	}
 	mm := cfg.Matchmaking
+	if mm.PartyInviteTTLSeconds < 0 {
+		return errors.New("matchmaking.party_invite_ttl_seconds 不能为负数")
+	}
 	if mm.TickSeconds <= 0 {
 		return errors.New("matchmaking.tick_seconds 必须为正数")
 	}
@@ -686,6 +711,7 @@ func createDefaultConfig(path string) error {
 			MaxRatingWindow:             1000,
 			AssignmentTTLSeconds:        1800,
 			RoomReservationTTLSeconds:   900,
+			PartyInviteTTLSeconds:       300,
 			Modes: []MatchMode{
 				{MatchType: "1v1", TeamSizes: []int{1, 1}},
 				{MatchType: "2v2", TeamSizes: []int{2, 2}},

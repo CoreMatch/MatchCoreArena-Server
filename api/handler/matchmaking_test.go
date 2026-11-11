@@ -84,6 +84,51 @@ func (f *fakeMatchmakingService) Assignment(_ context.Context, uuid string) (*se
 	}, nil
 }
 
+func (f *fakeMatchmakingService) Invite(_ context.Context, callerUID int64, matchType string, memberUUIDs []string) ([]*service.PartyInvite, error) {
+	f.lastUID = callerUID
+	f.lastType = matchType
+	f.lastMembers = memberUUIDs
+	if f.joinErr != nil {
+		return nil, f.joinErr
+	}
+	invites := make([]*service.PartyInvite, 0, len(memberUUIDs))
+	for i := range memberUUIDs {
+		invites = append(invites, &service.PartyInvite{
+			ID: int64(900 + i), InviterUID: callerUID, InviteeUID: int64(200 + i),
+			MatchType: matchType, Status: service.InviteStatusPending,
+			CreatedAt: "2026-11-12 10:00:00", ExpiresAt: "2026-11-12 10:05:00",
+		})
+	}
+	return invites, nil
+}
+
+func (f *fakeMatchmakingService) MyInvites(_ context.Context, uid int64) ([]*service.PartyInvite, error) {
+	f.lastUID = uid
+	return []*service.PartyInvite{}, nil
+}
+
+func (f *fakeMatchmakingService) AcceptInvite(_ context.Context, uid int64, inviteID int64) (*service.PartyInvite, error) {
+	f.lastUID = uid
+	if f.joinErr != nil {
+		return nil, f.joinErr
+	}
+	return &service.PartyInvite{
+		ID: inviteID, InviterUID: 5, InviteeUID: uid, MatchType: "2v2",
+		Status: service.InviteStatusAccepted,
+	}, nil
+}
+
+func (f *fakeMatchmakingService) RejectInvite(_ context.Context, uid int64, inviteID int64) (*service.PartyInvite, error) {
+	f.lastUID = uid
+	if f.joinErr != nil {
+		return nil, f.joinErr
+	}
+	return &service.PartyInvite{
+		ID: inviteID, InviterUID: 5, InviteeUID: uid, MatchType: "2v2",
+		Status: service.InviteStatusRejected,
+	}, nil
+}
+
 // newMatchmakingRouter 装配带鉴权中间件的匹配路由。
 func newMatchmakingRouter(v auth.Verifier, svc service.MatchmakingService) *gin.Engine {
 	gin.SetMode(gin.TestMode)
@@ -96,6 +141,10 @@ func newMatchmakingRouter(v auth.Verifier, svc service.MatchmakingService) *gin.
 	api.DELETE("/matchmaking/leave", h.Leave)
 	api.GET("/matchmaking/status", h.Status)
 	api.GET("/matchmaking/assignment/:uuid", h.Assignment)
+	api.POST("/matchmaking/invites", h.Invite)
+	api.GET("/matchmaking/invites", h.MyInvites)
+	api.POST("/matchmaking/invites/:id/accept", h.AcceptInvite)
+	api.POST("/matchmaking/invites/:id/reject", h.RejectInvite)
 	return r
 }
 

@@ -261,7 +261,7 @@ func TestMigrationDualPathSchemaParity(t *testing.T) {
 	if err := migrate.RunMigrations(cfg); err != nil {
 		t.Fatalf("旧库升级迁移失败: %v", err)
 	}
-	assertAppliedVersions(t, db, 1, 2, 3, 4)
+	assertAppliedVersions(t, db, 1, 2, 3, 4, 5)
 	assertLegacyDataPreserved(t, db)
 	upgradedFP := schemaFingerprint(t, db)
 	db.Close()
@@ -272,7 +272,7 @@ func TestMigrationDualPathSchemaParity(t *testing.T) {
 		t.Fatalf("全新库初始化迁移失败: %v", err)
 	}
 	db = openMigrationTestDB(t, dsn)
-	assertAppliedVersions(t, db, 1, 2, 3, 4)
+	assertAppliedVersions(t, db, 1, 2, 3, 4, 5)
 	freshFP := schemaFingerprint(t, db)
 	db.Close()
 
@@ -308,7 +308,7 @@ func TestMigrationConcurrentInstances(t *testing.T) {
 
 	db := openMigrationTestDB(t, dsn)
 	defer db.Close()
-	assertAppliedVersions(t, db, 1, 2, 3, 4)
+	assertAppliedVersions(t, db, 1, 2, 3, 4, 5)
 
 	var duplicated int
 	err := db.QueryRow(
@@ -327,8 +327,8 @@ func TestMigrationConcurrentInstances(t *testing.T) {
 			"AND TABLE_NAME LIKE 'matchmaking\\_%'").Scan(&tables); err != nil {
 		t.Fatalf("统计 matchmaking 表失败: %v", err)
 	}
-	if tables != 6 {
-		t.Errorf("matchmaking_* 表数量 = %d, 期望 6", tables)
+	if tables != 7 {
+		t.Errorf("matchmaking_* 表数量 = %d, 期望 7（v5 新增 matchmaking_party_invites）", tables)
 	}
 }
 
@@ -345,5 +345,5 @@ func TestMigrationRerunIsNoop(t *testing.T) {
 	}
 	db := openMigrationTestDB(t, dsn)
 	defer db.Close()
-	assertAppliedVersions(t, db, 1, 2, 3, 4)
+	assertAppliedVersions(t, db, 1, 2, 3, 4, 5)
 }

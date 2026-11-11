@@ -62,7 +62,9 @@ is decided, the decision lands here.
      caller (default deny): a minimal invite/accept state machine
      (pending → accepted / rejected / expired; an acceptance is consumed by
      the party join it enabled) with dedicated endpoints; reject and expiry
-     have explicit typed answers.
+     have explicit typed answers. Implemented (contract 1.11.0, migration
+     v5): `/api/matchmaking/invites` (+ accept/reject) and the join-time
+     consent checks, see 0012.
 
 ### Pending author decisions
 

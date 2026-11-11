@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"strconv"
+
 	"github.com/gin-gonic/gin"
 
 	"MatchCoreArena-Server/api/middleware"
@@ -90,4 +92,81 @@ func (h *MatchmakingHandler) Assignment(c *gin.Context) {
 		return
 	}
 	response.OK(c, "查询成局分配成功", asn)
+}
+
+// inviteInput POST /api/matchmaking/invites 请求体（契约 1.11.0）。
+type inviteInput struct {
+	MatchType   string   `json:"match_type" binding:"required"`
+	MemberUUIDs []string `json:"member_uuids" binding:"required"`
+}
+
+// Invite POST /api/matchmaking/invites
+// 发出组队邀请（只建 pending 邀请，不入队）。
+func (h *MatchmakingHandler) Invite(c *gin.Context) {
+	uid := middleware.GetUID(c)
+
+	var body inviteInput
+	if err := c.ShouldBindJSON(&body); err != nil {
+		response.FailCode(c, apperr.CodeMCAInvalidRequest, "请求参数格式错误: "+err.Error())
+		return
+	}
+
+	invites, err := h.svc.Invite(c.Request.Context(), uid, body.MatchType, body.MemberUUIDs)
+	if err != nil {
+		response.Fail(c, "发出组队邀请失败", err)
+		return
+	}
+	response.Created(c, "组队邀请已发出", invites)
+}
+
+// MyInvites GET /api/matchmaking/invites
+// 列出本人相关的邀请（发出或收到）。
+func (h *MatchmakingHandler) MyInvites(c *gin.Context) {
+	uid := middleware.GetUID(c)
+	invites, err := h.svc.MyInvites(c.Request.Context(), uid)
+	if err != nil {
+		response.Fail(c, "查询组队邀请失败", err)
+		return
+	}
+	response.OK(c, "查询组队邀请成功", invites)
+}
+
+// inviteIDParam 解析路径参数 :id；非法 → 400。
+func inviteIDParam(c *gin.Context) (int64, bool) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		response.FailCode(c, apperr.CodeMCAInvalidRequest, "邀请 id 非法")
+		return 0, false
+	}
+	return id, true
+}
+
+// AcceptInvite POST /api/matchmaking/invites/:id/accept
+// 受邀人接受邀请（终态）。
+func (h *MatchmakingHandler) AcceptInvite(c *gin.Context) {
+	id, ok := inviteIDParam(c)
+	if !ok {
+		return
+	}
+	inv, err := h.svc.AcceptInvite(c.Request.Context(), middleware.GetUID(c), id)
+	if err != nil {
+		response.Fail(c, "接受组队邀请失败", err)
+		return
+	}
+	response.OK(c, "已接受组队邀请", inv)
+}
+
+// RejectInvite POST /api/matchmaking/invites/:id/reject
+// 受邀人拒绝邀请（终态）。
+func (h *MatchmakingHandler) RejectInvite(c *gin.Context) {
+	id, ok := inviteIDParam(c)
+	if !ok {
+		return
+	}
+	inv, err := h.svc.RejectInvite(c.Request.Context(), middleware.GetUID(c), id)
+	if err != nil {
+		response.Fail(c, "拒绝组队邀请失败", err)
+		return
+	}
+	response.OK(c, "已拒绝组队邀请", inv)
 }

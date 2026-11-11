@@ -32,6 +32,16 @@ rather than a parallel mechanism.
   together regardless of individual perf tweaks.
 - Solo queue is unchanged, except that a user already in a queued party
   cannot solo-queue (`409 mca_party_already_in_party`).
+- Consent (author decision 2026-11-12, contract 1.11.0): party join is
+  invitation-based, default deny. `POST /api/matchmaking/invites` creates
+  pending invitations (TTL `matchmaking.party_invite_ttl_seconds`, expiry
+  evaluated lazily, no sweeper); the invitee accepts or rejects via
+  `/api/matchmaking/invites/{id}/accept|reject` (invitee-only, terminal).
+  `joinAsParty` rejects rosters missing the caller
+  (`400 mca_caller_not_in_roster`) and members without an accepted,
+  unexpired, unconsumed invitation from the caller
+  (`409 mca_consent_missing`); a successful join consumes the acceptances
+  it used (`matchmaking_party_invites`, migration v5).
 
 ## Consequences
 - Consent is required (author decision 2026-11-12, 0007): the caller must be
@@ -52,5 +62,9 @@ rather than a parallel mechanism.
 - internal/service/match.go::applyPartySharing — same-party delta averaging via matchmaking_group_id
 - internal/service/uuid_resolve.go::resolveUUID — shared UUID→uid resolution (Redis cache + HRPAuth)
 - internal/apperr/codes.go::CodeMCAPartyAlreadyInParty — mca_party_already_in_party / mca_party_full
+- internal/service/matchmaking.go::Invite — invitation creation (TTL, duplicate-pending guard, no self-invite)
+- internal/service/matchmaking.go::resolveInviteTransition — accept/reject state machine (invitee-only, terminal, lazy expiry)
+- internal/apperr/codes.go::CodeMCAConsentMissing — consent error codes (mca_consent_missing / mca_caller_not_in_roster / mca_invite_*)
+- migrate/m005_party_invites.go::applyV5 — matchmaking_party_invites table (migration v5)
 - migrate/migrations/baseline.sql::matchmaking_parties — party and party-member tables (uk_user: one party per user)
 - test/e2e/e2e_test.go::TestMatchCoreE2E — party end-to-end (roster join, unsplit teams, shared settlement, cleanup)

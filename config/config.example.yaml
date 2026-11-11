@@ -1,7 +1,7 @@
 # MatchCoreArena-Server 应用配置模板
 # 复制为 config.yaml 后按需修改；版本变更由 config 包自动迁移。
 
-version: "1.11.0"
+version: "1.12.0"
 
 server:
   host: "0.0.0.0"
@@ -60,6 +60,9 @@ matchmaking:
   assignment_ttl_seconds: 1800
   # 房间预占 TTL（秒，config 1.11.0+）：成局时对房间预占的保留时长。
   room_reservation_ttl_seconds: 900
+  # 组队邀请有效期（秒，config 1.12.0+）：邀请超过该值未接受即过期
+  #（读取/接受/入队时惰性判定）。缺省 300。
+  party_invite_ttl_seconds: 300
   # 可排队模式：match_type 与对应各队人数
   modes:
     - match_type: "1v1"

@@ -225,6 +225,9 @@ func setupEnv(t *testing.T) *e2eEnv {
 			AssignmentTTLSeconds: 1800,
 			JoinTarget:           config.JoinTargetConfig{Host: "e2e-game.example.com", Port: 25565},
 			RoomReservationTTLSeconds: 1800,
+			// 邀请 TTL 取 2s：主流程毫秒内完成不受影响，过期路径
+			// sleep 后即可验证。
+			PartyInviteTTLSeconds: 2,
 			Servers: []config.MatchServer{
 				{Name: "e2e-sub-1", Host: "10.99.0.1", Port: 25501, Rooms: []config.RoomSpec{
 					{Name: "e2e-room-2a", Capacity: 2},
@@ -319,6 +322,28 @@ func matchScoreColumns(t *testing.T, env *e2eEnv, matchID int64) (winnerScore, l
 		t.Fatalf("读 matches 记分/表现列失败 (id=%d): %v", matchID, err)
 	}
 	return
+}
+
+// inviteAndAccept 完成一轮"邀请 + 接受"（契约 1.11.0 组队同意前置）：
+// 邀请人向受邀人发邀请，受邀人接受，返回邀请 id。
+func inviteAndAccept(t *testing.T, env *e2eEnv, matchType string, inviterToken, inviteeToken, inviteeUUID string) int64 {
+	t.Helper()
+	status, envelope := doJSON(t, env, http.MethodPost, "/api/matchmaking/invites", inviterToken,
+		map[string]any{"match_type": matchType, "member_uuids": []string{inviteeUUID}})
+	if status != http.StatusCreated {
+		t.Fatalf("发邀请 status = %d, want 201 (body=%v)", status, envelope)
+	}
+	invites := dataArray(t, envelope)
+	if len(invites) != 1 {
+		t.Fatalf("邀请数 = %d, want 1", len(invites))
+	}
+	inviteID := jsonInt(t, invites[0].(map[string]any), "id")
+	status, envelope = doJSON(t, env, http.MethodPost,
+		fmt.Sprintf("/api/matchmaking/invites/%d/accept", inviteID), inviteeToken, nil)
+	if status != http.StatusOK {
+		t.Fatalf("接受邀请 status = %d, want 200 (body=%v)", status, envelope)
+	}
+	return inviteID
 }
 
 // matchReport 构造一局 1v1 上报（统一 teams 形状）。
@@ -806,7 +831,7 @@ func TestMatchCoreE2E(t *testing.T) {
 		}
 	})
 
-	// 组队匹配：join 携带 party_members（成员 UUID 列表，与运维台同名字段）
+	// 组队匹配：邀请-接受同意（契约 1.11.0）→ join 携带 party_members
 	// → 整队入队 → 成局（同队同 party 不拆分）→ 队伍共享结算 → 清理后可重组队。
 	t.Run("party matchmaking end to end", func(t *testing.T) {
 		// 非法输入：未知成员 → 404；2v2 超员 → 409。
@@ -821,7 +846,63 @@ func TestMatchCoreE2E(t *testing.T) {
 			t.Fatalf("超员组队 status/code = %d/%v, want 409/mca_party_full", status, envelope["code"])
 		}
 
-		// 两队整队入队（107+108 对 109+110）。
+		// 同意机制（默认拒绝）：名单不含调用者 → 400；成员未接受邀请 → 409。
+		status, envelope = doJSON(t, env, http.MethodPost, "/api/matchmaking/join", userToken(107),
+			map[string]any{"match_type": "2v2", "party_members": []string{"e2e-uuid-8", "e2e-uuid-9"}})
+		if status != http.StatusBadRequest || envelope["code"] != "mca_caller_not_in_roster" {
+			t.Fatalf("名单缺调用者 status/code = %d/%v, want 400/mca_caller_not_in_roster", status, envelope["code"])
+		}
+		status, envelope = doJSON(t, env, http.MethodPost, "/api/matchmaking/join", userToken(107),
+			map[string]any{"match_type": "2v2", "party_members": []string{"e2e-uuid-7", "e2e-uuid-8"}})
+		if status != http.StatusConflict || envelope["code"] != "mca_consent_missing" {
+			t.Fatalf("无同意入队 status/code = %d/%v, want 409/mca_consent_missing", status, envelope["code"])
+		}
+
+		// 邀请生命周期：发出（pending）→ 列表可见 → 接受（终态）→
+		// 重复接受 409 → 拒绝路径终态 → 过期路径 409。
+		status, envelope = doJSON(t, env, http.MethodPost, "/api/matchmaking/invites", userToken(107),
+			map[string]any{"match_type": "2v2", "member_uuids": []string{"e2e-uuid-8"}})
+		if status != http.StatusCreated {
+			t.Fatalf("发邀请 status = %d, want 201 (body=%v)", status, envelope)
+		}
+		lifecycleInviteID := jsonInt(t, dataArray(t, envelope)[0].(map[string]any), "id")
+		// 受邀人视角列表可见该 pending 邀请。
+		status, envelope = doJSON(t, env, http.MethodGet, "/api/matchmaking/invites", userToken(108), nil)
+		if status != http.StatusOK {
+			t.Fatalf("查邀请 status = %d, want 200 (body=%v)", status, envelope)
+		}
+		foundPending := false
+		for _, item := range dataArray(t, envelope) {
+			inv := item.(map[string]any)
+			if jsonInt(t, inv, "id") == lifecycleInviteID && inv["status"] == "pending" {
+				foundPending = true
+			}
+		}
+		if !foundPending {
+			t.Fatalf("受邀人列表未见 pending 邀请 %d: %v", lifecycleInviteID, envelope)
+		}
+		// 非受邀人不得接受（邀请人自己也不行）→ 403。
+		status, envelope = doJSON(t, env, http.MethodPost,
+			fmt.Sprintf("/api/matchmaking/invites/%d/accept", lifecycleInviteID), userToken(107), nil)
+		if status != http.StatusForbidden || envelope["code"] != "mca_not_invitee" {
+			t.Fatalf("非受邀人接受 status/code = %d/%v, want 403/mca_not_invitee", status, envelope["code"])
+		}
+		// 受邀人接受 → 200 accepted；重复接受 → 409 resolved。
+		status, envelope = doJSON(t, env, http.MethodPost,
+			fmt.Sprintf("/api/matchmaking/invites/%d/accept", lifecycleInviteID), userToken(108), nil)
+		if status != http.StatusOK || dataMap(t, envelope)["status"] != "accepted" {
+			t.Fatalf("接受邀请 status = %d, want 200 accepted (body=%v)", status, envelope)
+		}
+		status, envelope = doJSON(t, env, http.MethodPost,
+			fmt.Sprintf("/api/matchmaking/invites/%d/accept", lifecycleInviteID), userToken(108), nil)
+		if status != http.StatusConflict || envelope["code"] != "mca_invite_resolved" {
+			t.Fatalf("重复接受 status/code = %d/%v, want 409/mca_invite_resolved", status, envelope["code"])
+		}
+		// 两队整队入队（107+108 对 109+110）：108 已接受 107 的邀请
+		//（lifecycleInviteID，TTL 内接受）；110 接受 109 的新邀请。
+		// 拒绝/过期路径放在两队入队之后断言——TTL 仅 2s，提前跑会
+		// 把前面的同意拖过期。
+		inviteAndAccept(t, env, "2v2", userToken(109), userToken(110), "e2e-uuid-10")
 		status, envelope = doJSON(t, env, http.MethodPost, "/api/matchmaking/join", userToken(107),
 			map[string]any{"match_type": "2v2", "party_members": []string{"e2e-uuid-7", "e2e-uuid-8"}})
 		if status != http.StatusCreated {
@@ -855,11 +936,58 @@ func TestMatchCoreE2E(t *testing.T) {
 			t.Fatalf("两队 party_id 相同: %d", party1)
 		}
 
-		// 已在队伍（排队中）的用户不能单人排队。
+		// 已在队伍（排队中）的用户不能单人排队。（须紧跟两队入队执行：
+		// 引擎 1s 一跳，拖久了队伍会被成局消费、临时队伍清理。）
 		status, envelope = doJSON(t, env, http.MethodPost, "/api/matchmaking/join", userToken(110),
 			map[string]any{"match_type": "2v2"})
 		if status != http.StatusConflict || envelope["code"] != "mca_party_already_in_party" {
 			t.Fatalf("队员单人排队 status/code = %d/%v, want 409/mca_party_already_in_party", status, envelope["code"])
+		}
+
+		// 拒绝路径：新邀请 → 受邀人拒绝（终态）→ 拿被拒邀请入队仍 409。
+		status, envelope = doJSON(t, env, http.MethodPost, "/api/matchmaking/invites", userToken(109),
+			map[string]any{"match_type": "2v2", "member_uuids": []string{"e2e-uuid-8"}})
+		if status != http.StatusCreated {
+			t.Fatalf("发邀请(拒绝路径) status = %d, want 201 (body=%v)", status, envelope)
+		}
+		rejectID := jsonInt(t, dataArray(t, envelope)[0].(map[string]any), "id")
+		status, envelope = doJSON(t, env, http.MethodPost,
+			fmt.Sprintf("/api/matchmaking/invites/%d/reject", rejectID), userToken(108), nil)
+		if status != http.StatusOK || dataMap(t, envelope)["status"] != "rejected" {
+			t.Fatalf("拒绝邀请 status = %d, want 200 rejected (body=%v)", status, envelope)
+		}
+		status, envelope = doJSON(t, env, http.MethodPost, "/api/matchmaking/join", userToken(109),
+			map[string]any{"match_type": "2v2", "party_members": []string{"e2e-uuid-9", "e2e-uuid-8"}})
+		if status != http.StatusConflict || envelope["code"] != "mca_consent_missing" {
+			t.Fatalf("被拒邀请入队 status/code = %d/%v, want 409/mca_consent_missing", status, envelope["code"])
+		}
+		// 过期路径：邀请（TTL 2s）→ 等待过期 → 接受 409、列表显示 expired。
+		// 成局可能在此 sleep 期间发生，不影响本断言（邀请独立于队列）。
+		status, envelope = doJSON(t, env, http.MethodPost, "/api/matchmaking/invites", userToken(109),
+			map[string]any{"match_type": "2v2", "member_uuids": []string{"e2e-uuid-8"}})
+		if status != http.StatusCreated {
+			t.Fatalf("发邀请(过期路径) status = %d, want 201 (body=%v)", status, envelope)
+		}
+		expireID := jsonInt(t, dataArray(t, envelope)[0].(map[string]any), "id")
+		time.Sleep(2200 * time.Millisecond)
+		status, envelope = doJSON(t, env, http.MethodPost,
+			fmt.Sprintf("/api/matchmaking/invites/%d/accept", expireID), userToken(108), nil)
+		if status != http.StatusConflict || envelope["code"] != "mca_invite_expired" {
+			t.Fatalf("过期接受 status/code = %d/%v, want 409/mca_invite_expired", status, envelope["code"])
+		}
+		status, envelope = doJSON(t, env, http.MethodGet, "/api/matchmaking/invites", userToken(108), nil)
+		if status != http.StatusOK {
+			t.Fatalf("查邀请(过期路径) status = %d, want 200", status)
+		}
+		foundExpired := false
+		for _, item := range dataArray(t, envelope) {
+			inv := item.(map[string]any)
+			if jsonInt(t, inv, "id") == expireID && inv["status"] == "expired" {
+				foundExpired = true
+			}
+		}
+		if !foundExpired {
+			t.Fatalf("列表未见 expired 邀请 %d: %v", expireID, envelope)
 		}
 
 		// 轮询等待引擎成局。
@@ -950,7 +1078,9 @@ func TestMatchCoreE2E(t *testing.T) {
 		}
 
 		// 成局后临时队伍已清理：同样成员可立即重组队入队，随后任一成员
-		// 离队即整队移出。
+		// 离队即整队移出。上一张同意已被首次入队消费——重组队需要
+		// 新一轮邀请-接受（同意一次性）。
+		inviteAndAccept(t, env, "2v2", userToken(107), userToken(108), "e2e-uuid-8")
 		status, envelope = doJSON(t, env, http.MethodPost, "/api/matchmaking/join", userToken(107),
 			map[string]any{"match_type": "2v2", "party_members": []string{"e2e-uuid-7", "e2e-uuid-8"}})
 		if status != http.StatusCreated {
@@ -1032,6 +1162,8 @@ func TestMatchCoreE2E(t *testing.T) {
 		}
 		leaders := []int64{111, 113, 115, 117}
 		for i, roster := range parties {
+			// 同意前置：队长邀请队友并获接受（契约 1.11.0）。
+			inviteAndAccept(t, env, "2v2", userToken(leaders[i]), userToken(leaders[i]+1), roster[1])
 			status, envelope := doJSON(t, env, http.MethodPost, "/api/matchmaking/join", userToken(leaders[i]),
 				map[string]any{"match_type": "2v2", "party_members": roster})
 			if status != http.StatusCreated {

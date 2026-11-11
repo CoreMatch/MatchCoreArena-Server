@@ -57,6 +57,7 @@ var migrations = []Migration{
 	{Version: 2, Name: "matchmaking_and_unified_reporting", Run: applyV2},
 	{Version: 3, Name: "match_assignment_link", Run: applyV3},
 	{Version: 4, Name: "room_reservations", Run: applyV4},
+	{Version: 5, Name: "party_invites", Run: applyV5},
 }
 
 // RunMigrations 连接数据库并执行迁移，启动时调用。

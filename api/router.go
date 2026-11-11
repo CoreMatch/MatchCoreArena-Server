@@ -103,6 +103,11 @@ func Register(r *gin.Engine, db *sql.DB, oauthClient *auth.Client, ver auth.Veri
 		api.DELETE("/matchmaking/leave", matchmakingH.Leave)
 		api.GET("/matchmaking/status", matchmakingH.Status)
 		api.GET("/matchmaking/assignment/:uuid", matchmakingH.Assignment) // 仅 OPS（handler 内门控）
+		// 组队同意机制（契约 1.11.0）：邀请-接受状态机
+		api.POST("/matchmaking/invites", matchmakingH.Invite)
+		api.GET("/matchmaking/invites", matchmakingH.MyInvites)
+		api.POST("/matchmaking/invites/:id/accept", matchmakingH.AcceptInvite)
+		api.POST("/matchmaking/invites/:id/reject", matchmakingH.RejectInvite)
 
 		// metrics（仅 OPS 级凭据）
 		api.GET("/metrics", metricsH.Metrics)
