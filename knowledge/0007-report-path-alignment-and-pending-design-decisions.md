@@ -42,7 +42,10 @@ is decided, the decision lands here.
      (scores 0, perf 1.0).
    Existing rows are left untouched — no backfill. The columns carry meaning
    only for matches settled by the version that introduced the writes; older
-   rows hold unknown/default values.
+   rows hold unknown/default values. Implemented: the settlement INSERT
+   writes all four columns (`internal/service/match.go::perfAvgOf` computes
+   the effective-perf average); the columns stay out of the API surface, so
+   no contract schema changed.
 2. **`virtual` reports settle as usual — deliberately** (former open item 8).
    Author decision: no separation, no filtering, and no retroactive rollback
    of already-settled `virtual` matches. Ops/debug-injected matches are
@@ -127,6 +130,7 @@ semantic or design choice, not a mechanical fix.
 - internal/service/match.go::winner_team_id — report INSERT columns (winner_uid/loser_uid not written)
 - internal/service/match.go::getUserStreak — streak query over match_participants.is_winner
 - internal/service/match.go::updateRanking — season hardcoded to 1
+- internal/service/match.go::perfAvgOf — settlement writes winner/loser_score (pre-settlement side averages, the Elo inputs) and winner/loser_perf (effective perf_tweak averages); draws keep column defaults
 - migrate/migrate.go::ApplyMigrations — versioned migration chain resolving former open item 1 (see 0017)
 - .gitignore (field: config/tokens.yaml) — real service-token file untracked; only the example is committed
 - deploy-manifest.yaml (field: data_dirs) — production tokens.yaml location recorded nowhere

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 	"time"
@@ -301,6 +302,20 @@ func validateTeams(teams []TeamInfo, durationSeconds int) error {
 	return nil
 }
 
+// perfAvgOf 返回成员列表实际生效表现系数的均值：perf_tweak 经服务端
+// 校验后的取值（夹在 [0.95, 1.05]，0/未提供按 1.0），即结算真正采用的
+// 系数。空列表返回 1.0（与 matches.*_perf 列默认值一致）。
+func perfAvgOf(members []ParticipantReport) float64 {
+	if len(members) == 0 {
+		return 1.0
+	}
+	sum := 0.0
+	for _, m := range members {
+		sum += rating.GetIndividualPerformanceTweak(m.PerfTweak)
+	}
+	return sum / float64(len(members))
+}
+
 // payloadHash 计算上报载荷的规范化哈希（幂等冲突检测用）。
 func payloadHash(in TeamReportInput, teams []TeamInfo, startedAt, finishedAt time.Time) string {
 	type hMember struct {
@@ -493,10 +508,53 @@ func (s *matchService) Report(ctx context.Context, reporterUID int64, in TeamRep
 	if in.MatchmakingGroupID > 0 {
 		groupIDArg = in.MatchmakingGroupID
 	}
+
+	// 2a. 各队平均分（前置到 matches 写入之前：记分/表现列要写结算输入）。
+	teamAvg := make([]float64, len(teams))
+	for i := range teams {
+		ratings := make([]float64, 0, len(teams[i].Members))
+		for _, m := range teams[i].Members {
+			ratings = append(ratings, float64(allParticipants[m.UUID].RankScore))
+		}
+		teamAvg[i] = rating.CalculateTeamAverageRating(ratings)
+	}
+
+	// 2b. 记分/表现列写真实结算输入（2026-11-12 作者决策，knowledge/0007），
+	// 让已结算对局日后可复算：
+	//   - winner_score / loser_score = 胜/败方结算前平均分（即 Elo 计算的
+	//     输入值；1v1 时退化为该玩家个人评分）；
+	//   - winner_perf / loser_perf = 胜/败方各成员实际生效 perf_tweak 的
+	//     均值（服务端校验后：夹在 [0.95, 1.05]，0/未提供按 1.0）。
+	// 败方跨多队时与 Elo 口径一致：全部败方成员拉平聚合。
+	// 平局无胜负方，保持列默认值（0/0、1.0/1.0）。存量行不回填：
+	// 这四列只对本版本起结算的对局有语义，更早的行是未知默认值。
+	winnerScore, loserScore := 0, 0
+	winnerPerf, loserPerf := 1.0, 1.0
+	loserAvg := 0.0
+	if winnerIdx >= 0 {
+		winnerScore = int(math.Round(teamAvg[winnerIdx]))
+		winnerPerf = perfAvgOf(teams[winnerIdx].Members)
+		loserRatingsAll := make([]float64, 0, len(allParticipants)-len(teams[winnerIdx].Members))
+		loserMembersAll := make([]ParticipantReport, 0, len(allParticipants)-len(teams[winnerIdx].Members))
+		for i := range teams {
+			if i == winnerIdx {
+				continue
+			}
+			for _, m := range teams[i].Members {
+				loserRatingsAll = append(loserRatingsAll, float64(allParticipants[m.UUID].RankScore))
+				loserMembersAll = append(loserMembersAll, m)
+			}
+		}
+		loserAvg = rating.CalculateTeamAverageRating(loserRatingsAll)
+		loserScore = int(math.Round(loserAvg))
+		loserPerf = perfAvgOf(loserMembersAll)
+	}
+
 	res, err := tx.ExecContext(ctx,
-		`INSERT INTO matches (match_type, source, map_name, server_id, game_id, payload_hash, matchmaking_group_id, winner_team_id, survival_rate, duration_seconds, started_at, finished_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO matches (match_type, source, map_name, server_id, game_id, payload_hash, matchmaking_group_id, winner_team_id, survival_rate, winner_score, loser_score, winner_perf, loser_perf, duration_seconds, started_at, finished_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		in.MatchType, source, in.MapName, in.ServerID, gameIDArg, hashArg, groupIDArg, winnerTeamID, survivalRate,
+		winnerScore, loserScore, winnerPerf, loserPerf,
 		in.DurationSeconds, startedAt, finishedAt,
 	)
 	if err != nil {
@@ -518,33 +576,15 @@ func (s *matchService) Report(ctx context.Context, reporterUID int64, in TeamRep
 	}
 	matchID, _ := res.LastInsertId()
 
-	// 3. 计算各队平均分。
-	teamAvg := make([]float64, len(teams))
-	for i := range teams {
-		ratings := make([]float64, 0, len(teams[i].Members))
-		for _, m := range teams[i].Members {
-			ratings = append(ratings, float64(allParticipants[m.UUID].RankScore))
-		}
-		teamAvg[i] = rating.CalculateTeamAverageRating(ratings)
-	}
-
-	// 4. 计算每个参与者的积分变动（先算后写，便于队伍共享结算）。
+	// 3. 计算每个参与者的积分变动（先算后写，便于队伍共享结算）。
+	// 各队平均分与败方全员平均分已在 matches 写入前算好（teamAvg /
+	// loserAvg，记分列同口径复用）。
 	settles := make([]participantSettle, 0, len(allParticipants))
 	if winnerIdx >= 0 {
 		// 有获胜队：胜队平均分对败方全员平均分求期望，胜队生存权重
 		// 作用于全部参与者。
-		loserRatings := make([]float64, 0)
-		for i := range teams {
-			if i == winnerIdx {
-				continue
-			}
-			for _, m := range teams[i].Members {
-				loserRatings = append(loserRatings, float64(allParticipants[m.UUID].RankScore))
-			}
-		}
-		avgLoser := rating.CalculateTeamAverageRating(loserRatings)
-		expectedW := rating.CalculateEloExpected(teamAvg[winnerIdx], avgLoser)
-		expectedL := rating.CalculateEloExpected(avgLoser, teamAvg[winnerIdx])
+		expectedW := rating.CalculateEloExpected(teamAvg[winnerIdx], loserAvg)
+		expectedL := rating.CalculateEloExpected(loserAvg, teamAvg[winnerIdx])
 		wRound := rating.GetSurvivalWeight(teams[winnerIdx].AliveCount, teams[winnerIdx].InitialCount)
 
 		for i := range teams {

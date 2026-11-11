@@ -107,7 +107,9 @@ func TestReportWinLoseUnified(t *testing.T) {
 		WithArgs(int64(8)).
 		WillReturnRows(sqlmock.NewRows([]string{"rank_score", "wins_count"}).AddRow(0, 0))
 	mock.ExpectExec(`INSERT INTO matches`).
-		WithArgs("1v1", service.MatchSourceGame, "", "", nil, nil, nil, "A", 1.0, 0,
+		WithArgs("1v1", service.MatchSourceGame, "", "", nil, nil, nil, "A", 1.0,
+			0, 0, 1.0, 1.0, // 记分/表现列：双方 0 分、无 perf 上报按 1.0
+			0,
 			time.Date(2026, 11, 6, 10, 0, 0, 0, time.UTC),
 			time.Date(2026, 11, 6, 10, 10, 0, 0, time.UTC)).
 		WillReturnResult(sqlmock.NewResult(1, 1))
@@ -181,7 +183,9 @@ func TestReportCompatShape(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"rank_score", "wins_count"}).AddRow(0, 0))
 	mock.ExpectExec(`INSERT INTO matches`).
 		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
-			sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), "A", 1.0, 0, sqlmock.AnyArg(), sqlmock.AnyArg()).
+			sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), "A", 1.0,
+			0, 0, 1.0, 1.0, // 记分/表现列：双方 0 分、无 perf 上报按 1.0
+			0, sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	expectStreak(mock, 7)
 	expectStreak(mock, 8)
@@ -225,7 +229,9 @@ func TestReportDrawUnified(t *testing.T) {
 		WithArgs(int64(8)).
 		WillReturnRows(sqlmock.NewRows([]string{"rank_score", "wins_count"}).AddRow(1200, 12))
 	mock.ExpectExec(`INSERT INTO matches`).
-		WithArgs("1v1", service.MatchSourceGame, "", "", nil, nil, nil, "", 0.0, 0,
+		WithArgs("1v1", service.MatchSourceGame, "", "", nil, nil, nil, "", 0.0,
+			0, 0, 1.0, 1.0, // 平局无胜负方：记分/表现列保持默认值
+			0,
 			time.Date(2026, 11, 6, 10, 0, 0, 0, time.UTC),
 			time.Date(2026, 11, 6, 10, 10, 0, 0, time.UTC)).
 		WillReturnResult(sqlmock.NewResult(1, 1))
@@ -248,6 +254,65 @@ func TestReportDrawUnified(t *testing.T) {
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet expectations (no streak query for draws): %v", err)
+	}
+}
+
+// TestReportScorePerfColumnsWritten 覆盖记分/表现列的真实写入
+//（2026-11-12 决策，knowledge/0007）：winner/loser_score 写胜/败方
+// 结算前平均分（Elo 计算输入），winner/loser_perf 写胜/败方实际生效
+// perf_tweak 均值（0/未提供按 1.0）。uid7=1000（perf 1.05）胜
+// uid8=900（未报 perf）：稳定期 K=190，完胜权重 1.25，
+// E7≈0.6402 → +90 / -85。
+func TestReportScorePerfColumnsWritten(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	svc := service.NewMatchService(db, newReportFakeHRPAuth(t), nil)
+
+	in := service.TeamReportInput{
+		MatchType: "1v1",
+		Teams: []service.TeamInfo{
+			{TeamID: "A", Result: service.ResultWin, InitialCount: 1, AliveCount: 1,
+				Members: []service.ParticipantReport{{UUID: "uuid-1", PerfTweak: 1.05}}},
+			{TeamID: "B", Result: service.ResultLose, InitialCount: 1, AliveCount: 1,
+				Members: []service.ParticipantReport{{UUID: "uuid-2"}}},
+		},
+		StartedAt:  "2026-11-06T10:00:00Z",
+		FinishedAt: "2026-11-06T10:10:00Z",
+	}
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT rank_score, wins_count FROM users WHERE uid = \? AND deleted_at IS NULL`).
+		WithArgs(int64(7)).
+		WillReturnRows(sqlmock.NewRows([]string{"rank_score", "wins_count"}).AddRow(1000, 12))
+	mock.ExpectQuery(`SELECT rank_score, wins_count FROM users WHERE uid = \? AND deleted_at IS NULL`).
+		WithArgs(int64(8)).
+		WillReturnRows(sqlmock.NewRows([]string{"rank_score", "wins_count"}).AddRow(900, 12))
+	mock.ExpectExec(`INSERT INTO matches`).
+		WithArgs("1v1", service.MatchSourceGame, "", "", nil, nil, nil, "A", 1.0,
+			1000, 900, 1.05, 1.0, // 结算前评分与生效表现系数
+			0,
+			time.Date(2026, 11, 6, 10, 0, 0, 0, time.UTC),
+			time.Date(2026, 11, 6, 10, 10, 0, 0, time.UTC)).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	expectStreak(mock, 7)
+	expectStreak(mock, 8)
+	expectPlayerWrites(mock, 7, 90)
+	expectPlayerWrites(mock, 8, -85)
+	mock.ExpectCommit()
+
+	m, _, err := svc.Report(t.Context(), 1, in)
+	if err != nil {
+		t.Fatalf("settlement failed: %v", err)
+	}
+	if len(m.Participants) != 2 {
+		t.Fatalf("participants = %d, want 2", len(m.Participants))
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
 	}
 }
 
@@ -392,7 +457,9 @@ func TestReportPartySharing(t *testing.T) {
 	}
 	mock.ExpectExec(`INSERT INTO matches`).
 		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
-			sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), "A", 1.0, 0, sqlmock.AnyArg(), sqlmock.AnyArg()).
+			sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), "A", 1.0,
+			0, 0, 1.0, 1.0, // 胜方 perf (1.05+0.95)/2 = 1.0；败方无上报按 1.0
+			0, sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	for _, uid := range []int64{7, 8, 9} {
 		mock.ExpectQuery(`SELECT mp\.is_winner, mp\.is_draw`).

@@ -308,6 +308,19 @@ func dataArray(t *testing.T, envelope map[string]any) []any {
 	return data
 }
 
+// matchScoreColumns 直连读取 matches 主表的记分/表现四列（这四列不在
+// API 响应中暴露，e2e 层直查数据库断言真实写入）。
+func matchScoreColumns(t *testing.T, env *e2eEnv, matchID int64) (winnerScore, loserScore int, winnerPerf, loserPerf float64) {
+	t.Helper()
+	err := env.db.QueryRow(
+		"SELECT winner_score, loser_score, winner_perf, loser_perf FROM matches WHERE id = ?", matchID,
+	).Scan(&winnerScore, &loserScore, &winnerPerf, &loserPerf)
+	if err != nil {
+		t.Fatalf("读 matches 记分/表现列失败 (id=%d): %v", matchID, err)
+	}
+	return
+}
+
 // matchReport 构造一局 1v1 上报（统一 teams 形状）。
 func matchReport(winnerUUID, loserUUID string) map[string]any {
 	return map[string]any{
@@ -414,6 +427,12 @@ func TestMatchCoreE2E(t *testing.T) {
 			t.Errorf("loser delta/after = %d/%d, want -325/0",
 				jsonInt(t, loser, "rank_score_delta"), jsonInt(t, loser, "rank_score_after"))
 		}
+		// 记分/表现列真实写入：双方 0 分起步（Elo 输入 0/0），未上报
+		// perf_tweak 按 1.0。
+		ws, ls, wp, lp := matchScoreColumns(t, env, match1ID)
+		if ws != 0 || ls != 0 || wp != 1.0 || lp != 1.0 {
+			t.Errorf("记分/表现列 = %d/%d/%v/%v, want 0/0/1/1", ws, ls, wp, lp)
+		}
 	})
 
 	t.Run("user profiles reflect settlement", func(t *testing.T) {
@@ -513,6 +532,11 @@ func TestMatchCoreE2E(t *testing.T) {
 			if jsonInt(t, p, "rank_score_delta") != 0 {
 				t.Errorf("uid %d delta = %d, want 0 for equal-rating draw", uid, jsonInt(t, p, "rank_score_delta"))
 			}
+		}
+		// 平局无胜负方：记分/表现列保持默认值。
+		ws, ls, wp, lp := matchScoreColumns(t, env, jsonInt(t, data, "id"))
+		if ws != 0 || ls != 0 || wp != 1.0 || lp != 1.0 {
+			t.Errorf("平局记分/表现列 = %d/%d/%v/%v, want 默认值 0/0/1/1", ws, ls, wp, lp)
 		}
 	})
 
@@ -917,6 +941,12 @@ func TestMatchCoreE2E(t *testing.T) {
 		}
 		if score := jsonInt(t, getUserProfile(t, env, 107), "rank_score"); score != 325 {
 			t.Errorf("107 rank_score = %d, want 325", score)
+		}
+		// 记分/表现列真实写入：双方结算前平均分 0（均为新建行 0 分），
+		// 胜方生效 perf 均值 (1.05+0.95)/2 = 1.0，败方未上报按 1.0。
+		ws, ls, wp, lp := matchScoreColumns(t, env, jsonInt(t, dataMap(t, envelope), "id"))
+		if ws != 0 || ls != 0 || wp != 1.0 || lp != 1.0 {
+			t.Errorf("2v2 记分/表现列 = %d/%d/%v/%v, want 0/0/1/1", ws, ls, wp, lp)
 		}
 
 		// 成局后临时队伍已清理：同样成员可立即重组队入队，随后任一成员
