@@ -18,6 +18,8 @@ const (
 	ContextKeyScopes = "scopes"
 	// ContextKeyAccessToken 当前请求的 access_token（用于 logout 等场景）。
 	ContextKeyAccessToken = "_access_token"
+	// ContextKeyOps 当前请求是否为 OPS 级凭据（运维/服务令牌）。
+	ContextKeyOps = "ops"
 )
 
 // Auth 返回 Bearer token 校验中间件。
@@ -56,6 +58,7 @@ func Auth(v auth.Verifier) gin.HandlerFunc {
 		c.Set(ContextKeyUID, result.UID)
 		c.Set(ContextKeyScopes, result.Scopes)
 		c.Set(ContextKeyAccessToken, token)
+		c.Set(ContextKeyOps, result.Ops)
 		c.Next()
 	}
 }
@@ -98,6 +101,13 @@ func GetAccessToken(c *gin.Context) string {
 	v, _ := c.Get(ContextKeyAccessToken)
 	token, _ := v.(string)
 	return token
+}
+
+// GetOps 从 gin.Context 中取出当前请求是否为 OPS 级凭据。
+func GetOps(c *gin.Context) bool {
+	v, _ := c.Get(ContextKeyOps)
+	ops, _ := v.(bool)
+	return ops
 }
 
 // HasScope 检查当前请求是否包含指定 scope。

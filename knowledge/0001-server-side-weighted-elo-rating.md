@@ -1,0 +1,69 @@
+# 0001. Server-Side Weighted Elo Rating Applied at Match Report Time
+
+## Status
+Accepted
+
+## Context
+MatchCoreArena-Server (MCA) is the rating and leaderboard service of the CoreMatch
+ecosystem. It needs a score model for team-based bedwars-style matches where the
+number of teams and team sizes vary per match, and where match outcomes arrive
+as pushed reports rather than being observed live.
+
+## Decision
+Rating is computed exclusively on this server, synchronously inside the database
+transaction that records a match report:
+
+- Classic Elo expected score with a 400 divisor:
+  `E = 1 / (1 + 10^((R_opponent - R_player) / 400))`.
+- Delta formula: `delta = K * (S - E) * W_round * W_streak * W_perf`.
+- K-factor is phase-based: a placement phase of the first 10 wins linearly decays
+  K from 520 to 390; afterwards a constant stability value `(165 + 215) / 2 = 190`
+  is used.
+- W_round is a survival-rate weight of the winning team (1.00 / 1.05 / 1.15 / 1.25).
+- W_streak is derived from the player's recent match history; W_perf is an
+  individual performance coefficient clamped to [0.95, 1.05] and supplied by the
+  reporter.
+- Teams are compared by average rating (winner-team average vs. all losers pooled).
+- `rank_score` is floored at 0 via `GREATEST(0, rank_score + ?)`.
+- Leaderboards are served from the `rankings` table, upserted per participant on
+  every report (`ON DUPLICATE KEY UPDATE`, for the CURRENT season — resolved in
+  the settlement transaction since contract 1.12.0, hard-coded 1 before; see 0021),
+  and queried with a real-time `ORDER BY score DESC` — no precomputed positions,
+  no Redis ZSET.
+
+The K-factor constants carry the code comment "Constants based on CS2 Premier
+Rating research report". The repo-root research PDF (binary) is the source of
+the model; the reviewable derivation — why 520/390 for the placement decay and
+190 for stability, and what each choice implies — is documented in 0020.
+
+## Consequences
+- All rating math is auditable per match: `match_participants` stores
+  `rank_score_before` and `rank_score_delta` for every participant.
+- Costs and limitations:
+  - The stability-phase K is a fixed midpoint; the code comment notes activity-based
+    adjustment was intentionally simplified away.
+  - `perf_tweak` is trusted from the reporter; the only known reporter
+    (BedwarsRel-MCA) hard-codes it to 1.0, so the coefficient is currently inert.
+  - Leaderboard queries sort on every request (acknowledged in code comments as
+    unsuitable for production scale without Redis ZSET or periodic `rank_position`
+    updates).
+  - Seasons roll over only by manual OPS action (0021); windows, snapshots and
+    per-season archival boards remain out of scope.
+
+## Evidence
+- internal/rating/rating.go::KPlacementStart — constants incl. "CS2 Premier Rating research report" comment
+- internal/rating/rating.go::CalculateEloExpected — Elo expected score
+- internal/rating/rating.go::GetKFactor — phase-based K-factor
+- internal/rating/rating.go::GetSurvivalWeight — survival weight
+- internal/rating/rating.go::GetStreakWeight — streak weight
+- internal/rating/rating.go::CalculateDelta — delta formula
+- internal/rating/rating_test.go — unit tests for the rating package (existence verified)
+- internal/service/match.go::Report — transactional report processing
+- internal/service/match.go::scoreUpdate — rank_score floor at 0
+- internal/service/match.go::updateRanking — rankings upsert for the season resolved at settlement (0021)
+- internal/service/ranking.go::GetTop — real-time top-N query; scale caveat comment inside GetTop
+- research-推导三种对局情况的记分权重近似模型.pdf — binary research document; reviewable derivation extracted in 0020
+- commit bb8b7c6136b1cf98bc8a40bdbf8294aef2bd9137 — feat: implement elo ranking and match reporting (2026-09-12)
+- commit 6279658307d011791f3a15a166ae81caf1c7c5dd — feat(match): add team match support and participant tracking (2026-09-18)
+- commit 7dc243d8ba789ae9926865f516bdfa105e1164d5 — added the research PDF (2026-09-11)
+- Cross-reference: 0020 (K-factor derivation and phase design — why 520/390/190)

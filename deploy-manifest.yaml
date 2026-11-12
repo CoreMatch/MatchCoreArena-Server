@@ -1,0 +1,95 @@
+# MatchCoreArena-Server 部署声明（deploy-manifest v1）
+# schema 依据：HA-Cupbearer internal/manifest/（SchemaVersion=1）
+manifest_version: 1
+kind: service
+project: mca-server
+display_name: MatchCoreArena-Server
+group: game
+# /api/status 上报的 version = 装载迁移后的配置版本，恒等于代码
+# config.CurrentVersion "1.11.0"（main.go 传 appCfg.Version；
+# config/config.go Load 迁移后校验 gotVersion == CurrentVersion）。
+# 1.9.0 之后的增量：1.10.0 assignment_ttl_seconds（契约 1.9.1 分配查询）、
+# 1.11.0 room_reservation_ttl_seconds + matchmaking.servers（契约 1.10.0 房间层）。
+service_version: "1.11.0"
+
+facts:
+  ports:
+    # deploy/config/mca-server.yaml.tmpl: server.host 0.0.0.0 / port 9178；
+    # compose 默认对外映射（成局客户端经 join_target 直连游戏侧，本口为 API）
+    - name: http
+      port: 9178
+      exposure: public
+  health:
+    # api/router.go r.GET("/api/status")；compose healthcheck 同路径
+    http:
+      port_name: http
+      path: /api/status
+      expect_status: 200
+      timeout_seconds: 5
+      interval_seconds: 30
+      retries: 3
+  smoke:
+    # 部署后冒烟：/api/status 不只返回 200，还必须真的上报版本字段
+    # （api/router.go 公开端点，data.version 来自 config.CurrentVersion；
+    # api/router_test.go 对同一结构有断言）。健康探测证明活着，
+    # 这条证明服务在干活。
+    - name: status-reports-version
+      method: GET
+      path: /api/status
+      expect_status: 200
+      timeout_seconds: 10
+      assert:
+        json_field: data.version
+        json_not_empty: data.version
+  depends_on:
+    # main.go：database/sql + redis 启动硬依赖（Ping 失败即 fatal）；
+    # auth.NewClient 启动期校验 HRPAuth 可达（knowledge 0008：唯一出站运行时
+    # 依赖），compose depends_on hrpauth: service_healthy。
+    - project: mysql
+      kind: required
+    - project: redis
+      kind: required
+    - project: hrpauth
+      kind: required
+  migration:
+    # main.go migrate.RunMigrations：版本化 schema 迁移，启动自动拿锁执行
+    # （knowledge 0017 frozen baseline v1 + additive v2）；
+    # 配置同样启动期自动迁移（1.5.0→1.9.0 内存迁移，不回写文件）。
+    mode: auto_on_startup
+  data_dirs: []
+  # 说明：持久数据全在 MySQL（knowledge 0005），本地仅 tokens.yaml 凭据文件；
+  # 其生产裸金属位置未见记录（代码默认 config/tokens.yaml，容器模板经
+  # MCA_TOKENS_PATH 指向 /app/data/tokens.yaml），故 data_dirs 留空、在回报列出。
+  config:
+    # config/config.go Load：默认路径 config/config.yaml（CONFIG_PATH 可覆盖）；
+    # 生产在位 /www/wwwroot/mca/config/config.yaml（PROD-UPGRADE §10-1）。
+    # 模板版本 = 模板首行 version: "1.11.0"（代码 CurrentVersion 同值；
+    # Cupbearer 模板已含 1.10.0/1.11.0 两个 TTL 键，装载不依赖内存迁移）。
+    - path: config/config.yaml
+      template_version: "1.11.0"
+  static_assets: ""
+
+baremetal:
+  process:
+    manager: aapanel
+  install:
+    # PROD-FILEREFRESH-20261107 §1：二进制在位路径 /www/wwwroot/mca/mca
+    root: /www/wwwroot/mca
+    binary_name: mca
+  artifact:
+    source: local_path
+    local_path: build/mca
+
+container:
+  enabled: false
+  # 容器形态镜像：已真实发布（Docker Hub，build → push → 回拉 → 挂回
+  # compose 平台冒烟全过，/api/status 上报 1.11.0）。镜像为 linux/amd64 +
+  # linux/arm64 多架构 manifest list，digest 钉的是 manifest list 摘要
+  #（非单平台子摘要），为生效引用，tag 仅可读别名。注意容器形态必须独占
+  # 数据库（compose 以 MCA_DB_NAME 覆盖 DB_NAME，见 Cupbearer deploy/docker-compose.yml）。
+  # 部署时 Cupbearer 按 digest 优先真实拉取本镜像（鉴权沿用宿主 docker 登录态；拉后摘要对照不符即响亮失败）。
+  image:
+    source: registry
+    repo: limeight/ha-mca-server
+    tag: "1.11.0-e40339d"
+    digest: "sha256:4b45285991bdcc7a1ff1f76d744575be62531afdc1ba2736beeafb023893b99c"

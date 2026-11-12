@@ -70,8 +70,13 @@ func CalculateTeamAverageRating(ratings []float64) float64 {
 
 // GetIndividualPerformanceTweak 获取个人表现微调系数 (±5%)
 // 基于个人贡献（如存活时长、KDA等）与团队平均水平的对比
-// 这里简化为由上报者计算后的综合表现值 perf，范围建议在 [0.95, 1.05]
+// 这里简化为由上报者计算后的综合表现值 perf，范围建议在 [0.95, 1.05]。
+// 0 表示上报方未提供该字段：按契约默认值 1.0（中性）处理，
+// 而不是落入下限 0.95 形成隐性惩罚。
 func GetIndividualPerformanceTweak(perf float64) float64 {
+	if perf == 0 {
+		return 1.0
+	}
 	if perf < 0.95 {
 		return 0.95
 	}

@@ -6,26 +6,41 @@ package auth
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 )
+
+// serviceTokenRefreshMargin 服务令牌剩余有效期低于该值时提前刷新，
+// 避免请求途中令牌过期。
+const serviceTokenRefreshMargin = 60 * time.Second
 
 // Client 是 HRPAuth 的轻量 HTTP 客户端。进程级单实例，并发安全。
 type Client struct {
 	baseURL        string
 	publicClientID string
 	http           *http.Client
+
+	// 服务身份（client_credentials）：用于 ops 级服务间接点。
+	serviceClientID     string
+	serviceClientSecret string
+	svcMu               sync.Mutex
+	svcToken            string
+	svcTokenExpiry      time.Time
 }
 
 // NewClient 构造 Client。baseURL 为 HRPAuth 根地址（如 http://localhost:8080）。
 // publicClientID 为 OAuth2 public client_id（如 hrpauth-webui），用于 refresh_token 等第一方流程。
+// serviceClientID/serviceClientSecret 为 ops 级服务凭据（client_credentials），
+// 用于 GET /services/users/{uuid} 等服务间接点；留空时相关调用返回 ErrServiceAuth。
 // 启动时校验 HRPAuth /status 可达性。
-func NewClient(baseURL, publicClientID string) (*Client, error) {
+func NewClient(baseURL, publicClientID, serviceClientID, serviceClientSecret string) (*Client, error) {
 	baseURL = strings.TrimRight(baseURL, "/")
 	httpClient := &http.Client{Timeout: 10 * time.Second}
 
@@ -38,10 +53,66 @@ func NewClient(baseURL, publicClientID string) (*Client, error) {
 	resp.Body.Close()
 
 	return &Client{
-		baseURL:        baseURL,
-		publicClientID: publicClientID,
-		http:           httpClient,
+		baseURL:             baseURL,
+		publicClientID:      publicClientID,
+		http:                httpClient,
+		serviceClientID:     strings.TrimSpace(serviceClientID),
+		serviceClientSecret: strings.TrimSpace(serviceClientSecret),
 	}, nil
+}
+
+// serviceToken 返回缓存的 ops 级服务令牌，过期前自动用
+// client_credentials 刷新。凭据未配置、换取失败或被拒绝时返回
+// ErrServiceAuth（类型化，不静默）。
+func (c *Client) serviceToken(ctx context.Context) (string, error) {
+	if c.serviceClientID == "" || c.serviceClientSecret == "" {
+		return "", fmt.Errorf("服务凭据未配置 (auth.hrpauth.service_client_id/secret): %w", ErrServiceAuth)
+	}
+
+	c.svcMu.Lock()
+	defer c.svcMu.Unlock()
+
+	// 缓存命中且距过期仍有刷新余量 → 直接复用。
+	if c.svcToken != "" && time.Until(c.svcTokenExpiry) > serviceTokenRefreshMargin {
+		return c.svcToken, nil
+	}
+
+	form := url.Values{
+		"grant_type":    {"client_credentials"},
+		"client_id":     {c.serviceClientID},
+		"client_secret": {c.serviceClientSecret},
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		c.baseURL+"/oauth/token", strings.NewReader(form.Encode()))
+	if err != nil {
+		return "", fmt.Errorf("构造服务令牌请求失败: %w", ErrServiceAuth)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("换取服务令牌失败: %w", ErrServiceAuth)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		return "", fmt.Errorf("换取服务令牌被拒绝 (HTTP %d): %w", resp.StatusCode, ErrServiceAuth)
+	}
+
+	// HRPAuth 的统一信封会把 data 字段同时扁平化到顶层，
+	// 因此顶层即可解出 access_token / expires_in。
+	var tr struct {
+		AccessToken string `json:"access_token"`
+		ExpiresIn   int    `json:"expires_in"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&tr); err != nil || tr.AccessToken == "" {
+		return "", fmt.Errorf("服务令牌响应无效: %w", ErrServiceAuth)
+	}
+
+	c.svcToken = tr.AccessToken
+	c.svcTokenExpiry = time.Now().Add(time.Duration(tr.ExpiresIn) * time.Second)
+	return c.svcToken, nil
 }
 
 // ─── Endpoint methods ────────────────────────────────────────────────────────
@@ -329,15 +400,31 @@ func (c *Client) LookupUserByUsername(username string) (uid int64, uname string,
 }
 
 // LookupUserByUUID 通过 UUID 查找 HRPAuth 用户并获取 UID。
-// 调用 POST /user/lookup-uuid（公开端点，无需鉴权）。
+// 调用已缔约的 ops 级服务间接点 GET /services/users/{uuid}
+// （契约：HA-Contract docs/api/openapi/hrpauth-business.yaml
+// /services/users/{uuid}；服务调用关系见 docs/dev/HRPAuth/tokens.md），
+// 携带 client_credentials 换取的服务令牌（见 serviceToken）。
 //
-//	200 → (uid, nil)
-//	404 → (0, ErrUserNotFound)
-//	其他 → (0, ErrUpstream)
-func (c *Client) LookupUserByUUID(uuid string) (uid int64, err error) {
-	resp, err := c.doPost("/user/lookup-uuid", map[string]string{
-		"uuid": uuid,
-	})
+//	200        → (uid, nil)
+//	404        → (0, ErrUserNotFound)
+//	401 / 403  → (0, ErrServiceAuth)（服务凭据/级别问题，重试无意义）
+//	凭据不可用 → (0, ErrServiceAuth)
+//	其他       → (0, ErrUpstream)
+func (c *Client) LookupUserByUUID(ctx context.Context, uuid string) (int64, error) {
+	token, err := c.serviceToken(ctx)
+	if err != nil {
+		return 0, err
+	}
+
+	u := c.baseURL + "/services/users/" + url.PathEscape(uuid)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return 0, fmt.Errorf("构造 services/users 请求失败: %w", ErrUpstream)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.http.Do(req)
 	if err != nil {
 		return 0, ErrUpstream
 	}
@@ -345,18 +432,23 @@ func (c *Client) LookupUserByUUID(uuid string) (uid int64, err error) {
 
 	switch resp.StatusCode {
 	case 200:
+		// 统一信封：uid 在 data 内（顶层亦有扁平化副本，取 data 为准）。
 		var result struct {
-			UID int64 `json:"uid"`
+			Data struct {
+				UID int64 `json:"uid"`
+			} `json:"data"`
 		}
 		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-			return 0, fmt.Errorf("解析 lookup-uuid 响应失败: %w", err)
+			return 0, fmt.Errorf("解析 services/users 响应失败: %w", ErrUpstream)
 		}
-		if result.UID == 0 {
+		if result.Data.UID == 0 {
 			return 0, ErrUserNotFound
 		}
-		return result.UID, nil
+		return result.Data.UID, nil
 	case 404:
 		return 0, ErrUserNotFound
+	case 401, 403:
+		return 0, ErrServiceAuth
 	default:
 		return 0, ErrUpstream
 	}

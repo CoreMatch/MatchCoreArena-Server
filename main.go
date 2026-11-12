@@ -1,9 +1,11 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"log"
+	"os"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
@@ -11,6 +13,7 @@ import (
 	"MatchCoreArena-Server/api"
 	"MatchCoreArena-Server/config"
 	"MatchCoreArena-Server/internal/auth"
+	"MatchCoreArena-Server/internal/service"
 	"MatchCoreArena-Server/migrate"
 	"MatchCoreArena-Server/redis"
 )
@@ -68,14 +71,30 @@ func main() {
 	log.Println("Redis 连接成功")
 
 	// 6. 初始化 HRPAuth 客户端（启动时校验 HRPAuth 可达性）
-	hrpauthClient, err := auth.NewClient(appCfg.Auth.HRPAuth.BaseURL, appCfg.Auth.HRPAuth.PublicClientID)
+	hrpauthClient, err := auth.NewClient(
+		appCfg.Auth.HRPAuth.BaseURL,
+		appCfg.Auth.HRPAuth.PublicClientID,
+		appCfg.Auth.HRPAuth.ServiceClientID,
+		appCfg.Auth.HRPAuth.ServiceClientSecret,
+	)
 	if err != nil {
 		log.Fatalf("初始化 HRPAuth 客户端失败: %v", err)
 	}
 	log.Println("HRPAuth 客户端初始化成功")
+	if appCfg.Auth.HRPAuth.ServiceClientID == "" || appCfg.Auth.HRPAuth.ServiceClientSecret == "" {
+		log.Println("警告: auth.hrpauth.service_client_id/secret 未配置，结算参与者身份解析（服务间接点）将失败")
+	}
 
 	// 7. 加载高权限服务凭据 (tokens.yaml)
-	tokenStore, err := auth.LoadTokenStore("config/tokens.yaml")
+	// 路径优先级：环境变量 MCA_TOKENS_PATH > 配置 auth.tokens_path > 默认值。
+	tokensPath := appCfg.Auth.TokensPath
+	if tokensPath == "" {
+		tokensPath = "config/tokens.yaml"
+	}
+	if v := os.Getenv("MCA_TOKENS_PATH"); v != "" {
+		tokensPath = v
+	}
+	tokenStore, err := auth.LoadTokenStore(tokensPath)
 	if err != nil {
 		log.Printf("警告: 加载 tokens.yaml 失败 (可能不存在): %v", err)
 	}
@@ -85,9 +104,17 @@ func main() {
 
 	// 9. 初始化 Gin 路由
 	r := gin.Default()
-	api.Register(r, db, hrpauthClient, tokenVerifier, redisClient, appCfg.Version)
+	api.Register(r, db, hrpauthClient, tokenVerifier, redisClient, appCfg.Version, *appCfg)
 
-	// 9. 启动服务器
+	// 10. 启动匹配引擎（后台周期扫描队列成局）
+	if appCfg.Matchmaking.Enabled {
+		engine := service.NewMatchmakingEngine(db, appCfg.Matchmaking)
+		engine.Start(context.Background())
+		log.Printf("匹配引擎已启动（周期 %ds，超时 %ds，模式 %d 种）",
+			appCfg.Matchmaking.TickSeconds, appCfg.Matchmaking.QueueTimeoutSeconds, len(appCfg.Matchmaking.Modes))
+	}
+
+	// 11. 启动服务器
 	addr := appCfg.Server.Host + ":" + strconv.Itoa(appCfg.Server.Port)
 	log.Printf("HTTP 服务启动于 %s", addr)
 	if err := r.Run(addr); err != nil {

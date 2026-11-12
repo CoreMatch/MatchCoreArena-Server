@@ -6,6 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"MatchCoreArena-Server/api/middleware"
+	"MatchCoreArena-Server/config"
 	"MatchCoreArena-Server/internal/apperr"
 	"MatchCoreArena-Server/internal/response"
 	"MatchCoreArena-Server/internal/service"
@@ -13,12 +14,14 @@ import (
 
 // RankingHandler 排行榜 HTTP handler。
 type RankingHandler struct {
-	svc service.RankingService
+	svc   service.RankingService
+	tiers []config.RankTier
 }
 
-// NewRankingHandler 创建 RankingHandler。
-func NewRankingHandler(svc service.RankingService) *RankingHandler {
-	return &RankingHandler{svc: svc}
+// NewRankingHandler 创建 RankingHandler。tiers 为段位阶梯展示配置
+//（可为空：端点返回空数组，前端不显示进度条）。
+func NewRankingHandler(svc service.RankingService, tiers []config.RankTier) *RankingHandler {
+	return &RankingHandler{svc: svc, tiers: tiers}
 }
 
 // GetTop GET /api/rankings/:type
@@ -33,17 +36,16 @@ func (h *RankingHandler) GetTop(c *gin.Context) {
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
-	season, _ := strconv.Atoi(c.DefaultQuery("season", "1"))
-	if season <= 0 {
-		season = 1
-	}
+	// season 缺省/非正数不再写死 1：由服务层解析为当前赛季
+	//（契约 1.12.0 手动更季）。
+	season, _ := strconv.Atoi(c.Query("season"))
 
-	rankings, err := h.svc.GetTop(c.Request.Context(), rankType, limit, season)
+	result, err := h.svc.GetTop(c.Request.Context(), rankType, limit, season)
 	if err != nil {
 		response.Fail(c, "获取排行榜失败", err)
 		return
 	}
-	response.OK(c, "获取排行榜成功", rankings)
+	response.OK(c, "获取排行榜成功", result)
 }
 
 // GetMyRank GET /api/rankings/me?type=xxx
@@ -56,10 +58,8 @@ func (h *RankingHandler) GetMyRank(c *gin.Context) {
 		return
 	}
 
-	season, _ := strconv.Atoi(c.DefaultQuery("season", "1"))
-	if season <= 0 {
-		season = 1
-	}
+	// season 缺省/非正数由服务层解析为当前赛季（契约 1.12.0）。
+	season, _ := strconv.Atoi(c.Query("season"))
 
 	ranking, err := h.svc.GetMyRank(c.Request.Context(), uid, rankType, season)
 	if err != nil {
@@ -67,4 +67,15 @@ func (h *RankingHandler) GetMyRank(c *gin.Context) {
 		return
 	}
 	response.OK(c, "获取我的排名成功", ranking)
+}
+
+// Tiers GET /api/rankings/tiers
+// 段位阶梯展示配置（纯展示：不参与结算、不引入赛季）。未配置时返回
+// 空数组，前端据此不显示进度条。
+func (h *RankingHandler) Tiers(c *gin.Context) {
+	tiers := h.tiers
+	if tiers == nil {
+		tiers = []config.RankTier{}
+	}
+	response.OK(c, "获取段位阶梯成功", tiers)
 }

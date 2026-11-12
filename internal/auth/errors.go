@@ -29,4 +29,9 @@ var (
 
 	// ErrUserNotFound 在 HRPAuth 中找不到指定用户（username 或 uid）。
 	ErrUserNotFound = errors.New("hrpauth: user not found")
+
+	// ErrServiceAuth 服务身份不可用：服务凭据未配置、client_credentials
+	// 换取/刷新服务令牌失败，或服务令牌被 HRPAuth 拒绝（401/403）。
+	// 与瞬时上游故障（ErrUpstream）区分：这是凭据/授权问题，重试无意义。
+	ErrServiceAuth = errors.New("hrpauth: service credentials unavailable")
 )

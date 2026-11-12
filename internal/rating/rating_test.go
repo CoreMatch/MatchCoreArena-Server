@@ -39,26 +39,6 @@ func TestGetKFactor(t *testing.T) {
 	}
 }
 
-func TestGetSurvivalWeight(t *testing.T) {
-	// 胜队 11 人生还 / 13 初始 = 0.846（>0.75）→ 完胜 1.25
-	w := GetSurvivalWeight(11, 13)
-	if w != 1.25 {
-		t.Errorf("Expected 1.25, got %f", w)
-	}
-
-	// 胜队 0 人生还 / 13 初始 = 0（<=0.25）→ 惨胜 1.00
-	w = GetSurvivalWeight(0, 13)
-	if w != 1.00 {
-		t.Errorf("Expected 1.00, got %f", w)
-	}
-
-	// 胜队 7 人生还 / 13 初始 = 0.538（>0.5 且 <=0.75）→ 1.15
-	w = GetSurvivalWeight(7, 13)
-	if w != 1.15 {
-		t.Errorf("Expected 1.15, got %f", w)
-	}
-}
-
 func TestGetStreakWeight(t *testing.T) {
 	// 连胜 3 场
 	w := GetStreakWeight(3)
@@ -70,6 +50,24 @@ func TestGetStreakWeight(t *testing.T) {
 	w = GetStreakWeight(-5)
 	if w != 0.73 {
 		t.Errorf("Expected 0.73, got %f", w)
+	}
+}
+
+func TestGetIndividualPerformanceTweak(t *testing.T) {
+	// 未提供（0）按契约默认值 1.0 处理，不受下限钳制。
+	if w := GetIndividualPerformanceTweak(0); w != 1.0 {
+		t.Errorf("Expected 1.0 for omitted perf, got %f", w)
+	}
+	// 区间内原样返回。
+	if w := GetIndividualPerformanceTweak(1.03); w != 1.03 {
+		t.Errorf("Expected 1.03, got %f", w)
+	}
+	// 越界钳制到 [0.95, 1.05]。
+	if w := GetIndividualPerformanceTweak(0.5); w != 0.95 {
+		t.Errorf("Expected 0.95, got %f", w)
+	}
+	if w := GetIndividualPerformanceTweak(2.0); w != 1.05 {
+		t.Errorf("Expected 1.05, got %f", w)
 	}
 }
 

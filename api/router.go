@@ -9,13 +9,15 @@ import (
 
 	"MatchCoreArena-Server/api/handler"
 	"MatchCoreArena-Server/api/middleware"
+	"MatchCoreArena-Server/config"
 	"MatchCoreArena-Server/internal/auth"
 	"MatchCoreArena-Server/internal/response"
 	"MatchCoreArena-Server/internal/service"
 )
 
 // Register 装配所有 API 路由。
-func Register(r *gin.Engine, db *sql.DB, oauthClient *auth.Client, ver auth.Verifier, rdb *goredis.Client, version string) {
+// appCfg 提供匹配系统配置。
+func Register(r *gin.Engine, db *sql.DB, oauthClient *auth.Client, ver auth.Verifier, rdb *goredis.Client, version string, appCfg config.AppConfig) {
 	// 全局中间件
 	r.Use(middleware.RequestID())
 	r.Use(middleware.Recovery())
@@ -24,9 +26,11 @@ func Register(r *gin.Engine, db *sql.DB, oauthClient *auth.Client, ver auth.Veri
 	userSvc := service.NewUserService(db)
 	friendSvc := service.NewFriendService(db)
 	teamSvc := service.NewTeamService(db)
-	matchSvc := service.NewMatchService(db, oauthClient, rdb)
+	matchSvc := service.NewMatchService(db, oauthClient, rdb, appCfg.Report.DurationToleranceSeconds)
 	rankingSvc := service.NewRankingService(db)
+	seasonSvc := service.NewSeasonService(db)
 	maintenanceSvc := service.NewMaintenanceService(db)
+	matchmakingSvc := service.NewMatchmakingService(db, appCfg.Matchmaking, oauthClient, rdb)
 
 	// 初始化 handler 层
 	authH := handler.NewAuthHandler(oauthClient, ver)
@@ -34,15 +38,22 @@ func Register(r *gin.Engine, db *sql.DB, oauthClient *auth.Client, ver auth.Veri
 	friendH := handler.NewFriendHandler(friendSvc, oauthClient, rdb)
 	teamH := handler.NewTeamHandler(teamSvc)
 	matchH := handler.NewMatchHandler(matchSvc)
-	rankingH := handler.NewRankingHandler(rankingSvc)
+	rankingH := handler.NewRankingHandler(rankingSvc, appCfg.Ranking.Tiers)
+	seasonH := handler.NewSeasonHandler(seasonSvc)
 	maintenanceH := handler.NewMaintenanceHandler(maintenanceSvc)
+	matchmakingH := handler.NewMatchmakingHandler(matchmakingSvc)
+	metricsH := handler.NewMetricsHandler(matchmakingSvc)
 
-	// 公开端点
-	r.GET("/api/status", func(c *gin.Context) {
+	// 公开端点。/api/status 是全仓唯一开放跨域读取的路由（收紧白名单，
+	// 仅 mcnb.dev 门户；契约 matchcorearena-business.yaml 1.8.0），
+	// 其余端点一律不挂 CORS。
+	statusCORS := middleware.StatusCORS()
+	r.GET("/api/status", statusCORS, func(c *gin.Context) {
 		response.OK(c, "MatchCoreArena Server 运行中", gin.H{
 			"version": version,
 		})
 	})
+	r.OPTIONS("/api/status", statusCORS)
 
 	// 认证端点（公开，无需鉴权）
 	authGroup := r.Group("/api/auth")
@@ -62,6 +73,7 @@ func Register(r *gin.Engine, db *sql.DB, oauthClient *auth.Client, ver auth.Veri
 		// users
 		api.GET("/users/me", userH.GetMe)
 		api.GET("/users/:uid", userH.GetByUID)
+		api.GET("/users/:uid/matches", matchH.ListByUser)
 		api.POST("/users/me/experience", userH.AddExperience)
 
 		// friends
@@ -80,14 +92,36 @@ func Register(r *gin.Engine, db *sql.DB, oauthClient *auth.Client, ver auth.Veri
 		api.PUT("/teams/:id/members/:uid/role", teamH.UpdateMemberRole)
 		api.DELETE("/teams/:id/members/:uid", teamH.RemoveMember)
 
-		// matches
+		// matches（唯一上报入口，仅 OPS 级凭据）
 		api.POST("/matches", matchH.Report)
+		api.GET("/matches", matchH.List)
+		api.GET("/matches/by-game-id/:game_id", matchH.GetByGameID)
+		api.GET("/matches/rejections", matchH.Rejections)
 		api.GET("/matches/:id", matchH.GetByID)
 		api.GET("/matches/me", matchH.ListByMe)
 
-		// rankings（公开，但挂在鉴权组内不影响功能）
+		// matchmaking
+		api.POST("/matchmaking/join", matchmakingH.Join)
+		api.DELETE("/matchmaking/leave", matchmakingH.Leave)
+		api.GET("/matchmaking/status", matchmakingH.Status)
+		api.GET("/matchmaking/assignment/:uuid", matchmakingH.Assignment) // 仅 OPS（handler 内门控）
+		// 组队同意机制（契约 1.11.0）：邀请-接受状态机
+		api.POST("/matchmaking/invites", matchmakingH.Invite)
+		api.GET("/matchmaking/invites", matchmakingH.MyInvites)
+		api.POST("/matchmaking/invites/:id/accept", matchmakingH.AcceptInvite)
+		api.POST("/matchmaking/invites/:id/reject", matchmakingH.RejectInvite)
+
+		// metrics（仅 OPS 级凭据）
+		api.GET("/metrics", metricsH.Metrics)
+
+		// rankings（需要鉴权：与该组其他端点一致）
 		api.GET("/rankings/:type", rankingH.GetTop)
 		api.GET("/rankings/me", rankingH.GetMyRank)
+		api.GET("/rankings/tiers", rankingH.Tiers)
+
+		// seasons（契约 1.12.0：手动更季，无自动更季）
+		api.GET("/seasons", seasonH.List)
+		api.POST("/seasons/roll", seasonH.Roll) // 仅 OPS（handler 内门控）
 
 		// maintenance
 		api.POST("/maintenance/sql", maintenanceH.ExecuteSQL)

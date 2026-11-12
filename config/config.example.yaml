@@ -1,7 +1,7 @@
 # MatchCoreArena-Server 应用配置模板
 # 复制为 config.yaml 后按需修改；版本变更由 config 包自动迁移。
 
-version: "1.4.0"
+version: "1.13.0"
 
 server:
   host: "0.0.0.0"
@@ -28,10 +28,84 @@ auth:
   hrpauth:
     # HRPAuth 根地址，用于所有 OAuth2 端点调用。
     # MCA 作为透明代理，将前端的 auth 请求透传到 HRPAuth。
-    base_url: "http://localhost:8080"
+    base_url: "http://localhost:2778"
     # OAuth2 public client_id，用于 refresh_token 等第一方流程。
     # 默认值与 HRPAuth 配置对齐（hrpauth-webui）。
     public_client_id: "hrpauth-webui"
+    # ops 级服务凭据（client_credentials），用于服务间接点调用，
+    # 如 GET /services/users/{uuid}（结算时解析参与者 uuid→uid）。
+    # 部署时注入 HRPAuth 内置 super client 的凭据（与 Yggdrasil-API 的
+    # core_api.client_id/secret 同源）。留空时该类调用以类型化错误失败。
+    service_client_id: ""
+    service_client_secret: ""
   # 运维超级凭据，拥有所有权限。
   # 首次创建配置文件时会自动生成一个 64 位随机 16 进制字符串。
   maintenance_token: ""
+
+# 匹配系统：后台引擎周期性扫描队列，按分差窗口贪心成局。
+matchmaking:
+  enabled: true
+  # 引擎扫描周期（秒）
+  tick_seconds: 1
+  # 排队超时（秒）：超时未成局自动移出队列
+  queue_timeout_seconds: 300
+  # 基础分差窗口
+  base_rating_window: 200
+  # 窗口随等待时长的放宽速率（每分钟）
+  rating_window_growth_per_minute: 100
+  # 分差窗口上限
+  max_rating_window: 1000
+  # 成局分配有效期（秒，config 1.10.0+）：OPS 分配查询端点
+  # GET /api/matchmaking/assignment/{uuid} 用；超过该 TTL 的成局视为失效。
+  assignment_ttl_seconds: 1800
+  # 房间预占 TTL（秒，config 1.11.0+）：成局时对房间预占的保留时长。
+  room_reservation_ttl_seconds: 900
+  # 组队邀请有效期（秒，config 1.12.0+）：邀请超过该值未接受即过期
+  #（读取/接受/入队时惰性判定）。缺省 300。
+  party_invite_ttl_seconds: 300
+  # 可排队模式：match_type 与对应各队人数
+  modes:
+    - match_type: "1v1"
+      team_sizes: [1, 1]
+    - match_type: "2v2"
+      team_sizes: [2, 2]
+  # 子服 → 房间静态清单（config 1.11.0+，可选）：整体不配置 = 不启用房间层，
+  # 成局不预占房间，保持 1.9.x 行为；显式空清单（servers: []）会被配置校验拒绝。
+  # 启用后成局即预占房间，成局记录与分配的 join_target 携带绑定子服的地址
+  # （代理路由插件 VelocityGate 即按该地址把玩家送进对应子服）。
+  # 填法示例（把整段取消注释并换成真实值；子服名/房间名不得重复，
+  # host 必填、port 1-65535，每个子服至少一个房间，capacity 为正整数）：
+  #
+  # servers:
+  #   - name: "bw-sub-1"                   # 子服名（成局记录与运维引用用）
+  #     host: "game-sub-1.internal.example"   # 子服地址：只对代理可达，不暴露公网
+  #     port: 25565
+  #     rooms:
+  #       - name: "bw-room-1"              # 房间名（子服内唯一）
+  #         capacity: 8                    # 房间容量（正整数）
+  #
+  # 成局后下发给客户端的游戏服务器地址（交接链路用，字段名与客户端
+  # join_target 对齐）。这是无房间层（未配置 servers）时成局记录携带的
+  # 全局地址；启用房间层后成局记录改携绑定子服的地址，本段仅在预占失效
+  # 回落时使用。留空（host 为空）时成局响应不携带该字段，客户端回落本地配置。
+  join_target:
+    host: ""
+    port: 0
+
+# 排行榜展示配置（纯展示：不参与结算、不引入赛季）。
+ranking:
+  # 段位阶梯（名称 + 分数下限），供前端展示进度条；留空时前端不显示。
+  tiers: []
+  # 示例：
+  # tiers:
+  #   - name: "青铜"
+  #     min_score: 0
+  #   - name: "白银"
+  #     min_score: 1000
+
+# 对局上报校验配置（契约 1.13.0）。
+report:
+  # 正数 duration_seconds 与 finished_at-started_at 之差的容差（秒）：
+  # 差值在 ±容差内仍接受，超出按自相矛盾拒绝（400）。
+  # 0/缺省按默认 2 秒（1.13.0 前为严格相等）。
+  duration_tolerance_seconds: 2

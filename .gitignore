@@ -22,3 +22,6 @@ HA-Contract
 .trae
 build
 testuser.txt
+
+# 真实高权限凭据配置，不进版本库；新检出请 cp config/tokens.yaml.example config/tokens.yaml
+config/tokens.yaml

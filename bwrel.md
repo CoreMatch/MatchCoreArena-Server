@@ -35,20 +35,20 @@ I'm refining the scorekeeping logic. Recent work involved ensuring wins and loss
 **1. 统计数据的收集 (Collection)**
 统计数据在比赛进行期间实时记录在每个玩家对应的 `PlayerStatistic` 对象中。该对象维护了一组以 `current` 开头的字段（如 `currentKills`, `currentDeaths`），用于记录当前比赛的增量。
 
-- **击杀与死亡**：在 [GameCycle.java](file:///home/lnb/Desktop/HA/BedwarsRel-MCA/common/src/main/java/io/github/bedwarsrel/game/GameCycle.java#L86-L122) 的 `onPlayerDies` 方法中更新。
-- **摧毁床铺**：在 [Game.java](file:///home/lnb/Desktop/HA/BedwarsRel-MCA/common/src/main/java/io/github/bedwarsrel/game/Game.java#L808-L813) 的 `onBedDestroyed` 方法中更新。
+- **击杀与死亡**：在 [GameCycle.java](file:///home/lnb/Desktop/HA/matchcore/BedwarsRel-MCA/common/src/main/java/io/github/bedwarsrel/game/GameCycle.java#L86-L122) 的 `onPlayerDies` 方法中更新。
+- **摧毁床铺**：在 [Game.java](file:///home/lnb/Desktop/HA/matchcore/BedwarsRel-MCA/common/src/main/java/io/github/bedwarsrel/game/Game.java#L808-L813) 的 `onBedDestroyed` 方法中更新。
 - **胜场与败场**：
-    - **胜场**：在 [GameCycle.java](file:///home/lnb/Desktop/HA/BedwarsRel-MCA/common/src/main/java/io/github/bedwarsrel/game/GameCycle.java#L380-L386) 的 `runGameOver` 方法中，为获胜队伍的玩家增加胜场。
-    - **败场**：在 [GameCycle.java](file:///home/lnb/Desktop/HA/BedwarsRel-MCA/common/src/main/java/io/github/bedwarsrel/game/GameCycle.java#L235-L238) 的 `onPlayerRespawn` 方法中，如果玩家所属队伍已灭亡且无法复活，则记录败场。
+    - **胜场**：在 [GameCycle.java](file:///home/lnb/Desktop/HA/matchcore/BedwarsRel-MCA/common/src/main/java/io/github/bedwarsrel/game/GameCycle.java#L380-L386) 的 `runGameOver` 方法中，为获胜队伍的玩家增加胜场。
+    - **败场**：在 [GameCycle.java](file:///home/lnb/Desktop/HA/matchcore/BedwarsRel-MCA/common/src/main/java/io/github/bedwarsrel/game/GameCycle.java#L235-L238) 的 `onPlayerRespawn` 方法中，如果玩家所属队伍已灭亡且无法复活，则记录败场。
 - **分数 (Score)**：根据配置项（如 `statistics.scores.kill`），在上述行为发生时同步累加。
 
 **2. 统计数据的保存触发 (Trigger)**
 数据的持久化保存主要在以下两个时刻触发：
-- **比赛结束时**：在 [SingleGameCycle.java](file:///home/lnb/Desktop/HA/BedwarsRel-MCA/common/src/main/java/io/github/bedwarsrel/game/SingleGameCycle.java#L46-L51) 中，当 `onGameEnds` 被调用并依次“踢出”玩家回到大厅时，会触发 `storeStatistic`。
-- **中途退出时**：在 [Game.java](file:///home/lnb/Desktop/HA/BedwarsRel-MCA/common/src/main/java/io/github/bedwarsrel/game/Game.java#L1318) 的 `playerLeave` 方法中，如果玩家中途离开比赛，也会立即保存其当前统计数据。
+- **比赛结束时**：在 [SingleGameCycle.java](file:///home/lnb/Desktop/HA/matchcore/BedwarsRel-MCA/common/src/main/java/io/github/bedwarsrel/game/SingleGameCycle.java#L46-L51) 中，当 `onGameEnds` 被调用并依次“踢出”玩家回到大厅时，会触发 `storeStatistic`。
+- **中途退出时**：在 [Game.java](file:///home/lnb/Desktop/HA/matchcore/BedwarsRel-MCA/common/src/main/java/io/github/bedwarsrel/game/Game.java#L1318) 的 `playerLeave` 方法中，如果玩家中途离开比赛，也会立即保存其当前统计数据。
 
 **3. 保存位置与方式 (Persistence)**
-保存逻辑位于 [PlayerStatisticManager.java](file:///home/lnb/Desktop/HA/BedwarsRel-MCA/common/src/main/java/io/github/bedwarsrel/statistics/PlayerStatisticManager.java#L311-L325) 的 `storeStatistic` 方法中。系统会首先调用 `addCurrentValues()` 将本次比赛的增量合并到总计数值中，然后根据配置保存到指定位置：
+保存逻辑位于 [PlayerStatisticManager.java](file:///home/lnb/Desktop/HA/matchcore/BedwarsRel-MCA/common/src/main/java/io/github/bedwarsrel/statistics/PlayerStatisticManager.java#L311-L325) 的 `storeStatistic` 方法中。系统会首先调用 `addCurrentValues()` 将本次比赛的增量合并到总计数值中，然后根据配置保存到指定位置：
 
 - **YAML 文件（默认）**：
     - 路径：`plugins/BedwarsRel/database/bw_stats_players.yml`
@@ -149,14 +149,14 @@ I'm currently focused on how the `PlayerStatisticManager` handles player data. I
     - **败场 (Losses)**：玩家作为失败队伍成员（或床铺被毁后最终死亡）完成比赛的次数。
 - **派生与综合指标**：
     - **积分 (Score)**：根据对局行为计算的总分。积分规则通常在配置文件中定义（如击杀得 X 分，破床得 Y 分）。
-    - **KD 比 (KD Ratio)**：击杀数与死亡数的比例，由 [PlayerStatistic.java](file:///home/lnb/Desktop/HA/BedwarsRel-MCA/common/src/main/java/io/github/bedwarsrel/statistics/PlayerStatistic.java#L138-L151) 实时计算。
+    - **KD 比 (KD Ratio)**：击杀数与死亡数的比例，由 [PlayerStatistic.java](file:///home/lnb/Desktop/HA/matchcore/BedwarsRel-MCA/common/src/main/java/io/github/bedwarsrel/statistics/PlayerStatistic.java#L138-L151) 实时计算。
     - **总场次 (Games Played)**：胜场与败场的总和。
 
 ### **2. 地图对局记录 (Map Records)**
 这些数据记录在每张地图的配置文件中（如 `plugins/BedwarsRel/games/地图名.yml`），用于追踪该地图的历史最佳表现。
 
 - **最快获胜记录 (Record)**：该地图历史上最短的获胜时间。
-- **记录保持者 (Record Holders)**：创造最快获胜记录的玩家名单。如果当前对局打破了记录，系统会更新此名单并发布通告，见 [GameCycle.java](file:///home/lnb/Desktop/HA/BedwarsRel-MCA/common/src/main/java/io/github/bedwarsrel/game/GameCycle.java#L301-L304)。
+- **记录保持者 (Record Holders)**：创造最快获胜记录的玩家名单。如果当前对局打破了记录，系统会更新此名单并发布通告，见 [GameCycle.java](file:///home/lnb/Desktop/HA/matchcore/BedwarsRel-MCA/common/src/main/java/io/github/bedwarsrel/game/GameCycle.java#L301-L304)。
 
 ### **3. 即时结算信息 (Match Summary)**
 在对局结束的瞬间，系统会计算并向玩家展示本次对局的即时表现。
@@ -164,7 +164,7 @@ I'm currently focused on how the `PlayerStatisticManager` handles player data. I
 - **对局时长 (Play Time)**：从比赛开始到决出胜负所经过的时间。
 - **获胜队伍 (Winner)**：最终幸存并赢得比赛的队伍名称。
 - **单场增量统计**：
-    - 在结算界面，系统会对比显示玩家**本次对局**产生的增量数据（如“+2 Kills”），这些逻辑由 [PlayerStatisticManager.java](file:///home/lnb/Desktop/HA/BedwarsRel-MCA/common/src/main/java/io/github/bedwarsrel/statistics/PlayerStatisticManager.java#L42-L86) 处理。
+    - 在结算界面，系统会对比显示玩家**本次对局**产生的增量数据（如“+2 Kills”），这些逻辑由 [PlayerStatisticManager.java](file:///home/lnb/Desktop/HA/matchcore/BedwarsRel-MCA/common/src/main/java/io/github/bedwarsrel/statistics/PlayerStatisticManager.java#L42-L86) 处理。
 
 ### **数据处理流程**
 1.  **实时记录**：在对局过程中，数据实时累加在内存中的 `PlayerStatistic` 对象里。

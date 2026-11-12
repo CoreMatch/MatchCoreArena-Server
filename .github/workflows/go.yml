@@ -1,0 +1,66 @@
+# Go CI: build, vet and unit tests on every push/PR, plus the real-database
+# e2e suite against a MariaDB service container.
+#
+# The unit tests use go-sqlmock (pure Go) and need no external services and
+# no CGO; only the `e2e` job wires a service container.
+name: Go
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+
+    - name: Set up Go
+      uses: actions/setup-go@v7
+      with:
+        go-version-file: go.mod
+
+    - name: Build
+      run: go build ./...
+
+    - name: Vet
+      run: go vet ./...
+
+    - name: Test
+      run: go test ./...
+
+  # Real-database end-to-end suite (build tag `e2e`): full router +
+  # middleware + settlement transactions + embedded HRPAuth stub + real
+  # matchmaking engine against a MariaDB service container. The HRPAuth
+  # stub is embedded in the test binary, so no other services are needed.
+  e2e:
+    runs-on: ubuntu-latest
+    services:
+      mariadb:
+        image: mariadb:10.11
+        env:
+          MARIADB_USER: mca
+          MARIADB_PASSWORD: mca-e2e-pass
+          MARIADB_DATABASE: mca_e2e
+          MARIADB_ROOT_PASSWORD: mca-e2e-root
+        ports:
+          - 13306:3306
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+    steps:
+    - uses: actions/checkout@v7
+
+    - name: Set up Go
+      uses: actions/setup-go@v7
+      with:
+        go-version-file: go.mod
+
+    - name: E2E tests
+      env:
+        MCA_E2E_MYSQL_DSN: 'mca:mca-e2e-pass@tcp(127.0.0.1:13306)/mca_e2e?parseTime=true&charset=utf8mb4'
+      run: go test -tags e2e -count=1 ./test/e2e/...

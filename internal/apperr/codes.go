@@ -24,18 +24,39 @@ const (
 	CodeOAuthRefreshFailed     Code = "oauth_refresh_failed"
 	CodeOAuthRevokeFailed      Code = "oauth_revoke_failed"
 	CodeOAuthRateLimited       Code = "oauth_rate_limited"
-	CodeOAuthHRPAuthDown       Code = "oauth_hrpaauth_down"
+	CodeOAuthHRPAuthDown       Code = "oauth_hrpauth_down"
 	CodeInternal               Code = "internal_error"
 
 	// 本服务业务错误码
 	CodeMCAInvalidRequest      Code = "mca_invalid_request"
 	CodeMCAUserNotFound        Code = "mca_user_not_found"
+	CodeMCAUserNotProvisioned  Code = "mca_user_not_provisioned"
 	CodeMCAFriendNotFound      Code = "mca_friend_not_found"
 	CodeMCAFriendRequestExists Code = "mca_friend_request_exists"
 	CodeMCATeamNotFound        Code = "mca_team_not_found"
 	CodeMCATeamNameTaken       Code = "mca_team_name_taken"
 	CodeMCANotTeamLeader       Code = "mca_not_team_leader"
 	CodeMCAMatchNotFound       Code = "mca_match_not_found"
+	CodeMCAQueueAlreadyJoined  Code = "mca_queue_already_joined"
+	CodeMCAQueueNotJoined      Code = "mca_queue_not_joined"
+	CodeMCANotImplemented      Code = "mca_not_implemented"
+	CodeMCAReportInconsistent  Code = "mca_report_inconsistent"
+	CodeMCAGameIDConflict      Code = "mca_game_id_conflict"
+	CodeMCAPartyAlreadyInParty Code = "mca_party_already_in_party"
+	CodeMCAPartyFull           Code = "mca_party_full"
+	CodeMCARankingNotFound     Code = "mca_ranking_not_found"
+	// 组队同意机制（契约 1.11.0）：调用者必须在名单内；其余成员必须
+	// 已接受邀请（默认拒绝）；邀请状态机 pending→accepted/rejected，
+	// 过期惰性判定。
+	CodeMCACallerNotInRoster Code = "mca_caller_not_in_roster"
+	CodeMCAConsentMissing    Code = "mca_consent_missing"
+	CodeMCAInviteNotFound    Code = "mca_invite_not_found"
+	CodeMCAInviteExists      Code = "mca_invite_exists"
+	CodeMCAInviteExpired     Code = "mca_invite_expired"
+	CodeMCAInviteResolved    Code = "mca_invite_resolved"
+	CodeMCANotInvitee        Code = "mca_not_invitee"
+	// 赛季手动更迭（契约 1.12.0）：目标赛季已存在（含重复调用）。
+	CodeMCASeasonExists Code = "mca_season_exists"
 )
 
 // codeHTTPMap 将错误码映射到建议 HTTP 状态码。
@@ -53,12 +74,29 @@ var codeHTTPMap = map[Code]int{
 	CodeInternal:               http.StatusInternalServerError,
 	CodeMCAInvalidRequest:      http.StatusBadRequest,
 	CodeMCAUserNotFound:        http.StatusNotFound,
+	CodeMCAUserNotProvisioned:  http.StatusConflict,
 	CodeMCAFriendNotFound:      http.StatusNotFound,
 	CodeMCAFriendRequestExists: http.StatusConflict,
 	CodeMCATeamNotFound:        http.StatusNotFound,
 	CodeMCATeamNameTaken:       http.StatusConflict,
 	CodeMCANotTeamLeader:       http.StatusForbidden,
 	CodeMCAMatchNotFound:       http.StatusNotFound,
+	CodeMCAQueueAlreadyJoined:  http.StatusConflict,
+	CodeMCAQueueNotJoined:      http.StatusNotFound,
+	CodeMCANotImplemented:      http.StatusNotImplemented,
+	CodeMCAReportInconsistent:  http.StatusBadRequest,
+	CodeMCAGameIDConflict:      http.StatusConflict,
+	CodeMCAPartyAlreadyInParty: http.StatusConflict,
+	CodeMCAPartyFull:           http.StatusConflict,
+	CodeMCARankingNotFound:     http.StatusNotFound,
+	CodeMCACallerNotInRoster:   http.StatusBadRequest,
+	CodeMCAConsentMissing:      http.StatusConflict,
+	CodeMCAInviteNotFound:      http.StatusNotFound,
+	CodeMCAInviteExists:        http.StatusConflict,
+	CodeMCAInviteExpired:       http.StatusConflict,
+	CodeMCAInviteResolved:      http.StatusConflict,
+	CodeMCANotInvitee:          http.StatusForbidden,
+	CodeMCASeasonExists:        http.StatusConflict,
 }
 
 // StatusFromCode 根据错误码返回建议 HTTP 状态码，未注册的码返回 500。
