@@ -307,12 +307,16 @@ func (s *matchService) getUserRatingInfo(ctx context.Context, tx *sql.Tx, uid in
 }
 
 func (s *matchService) getUserStreak(ctx context.Context, tx *sql.Tx, uid int64) (int, error) {
-	// 获取最近 10 场对战结果来计算连胜/连败
+	// 获取该用户最近 10 场对战的胜负结果，从 match_participants 表查询
+	// （matches 表的 winner_uid/loser_uid 是 baseline 遗留的 1v1 语义，Report 从不写入，应废弃）
 	rows, err := tx.QueryContext(ctx,
-		`SELECT winner_uid FROM matches 
-		 WHERE (winner_uid = ? OR loser_uid = ?) 
-		 ORDER BY created_at DESC LIMIT 10`,
-		uid, uid,
+		`SELECT mp.is_winner
+		 FROM matches m
+		 JOIN match_participants mp ON mp.match_id = m.id
+		 WHERE mp.user_uid = ?
+		 ORDER BY m.created_at DESC
+		 LIMIT 10`,
+		uid,
 	)
 	if err != nil {
 		return 0, err
@@ -322,28 +326,35 @@ func (s *matchService) getUserStreak(ctx context.Context, tx *sql.Tx, uid int64)
 	streak := 0
 	isFirst := true
 	winning := false
+	hasAny := false
 
 	for rows.Next() {
-		var winnerUID int64
-		if err := rows.Scan(&winnerUID); err != nil {
+		hasAny = true
+		var isWinner bool
+		if err := rows.Scan(&isWinner); err != nil {
 			return 0, err
 		}
 
-		isWin := winnerUID == uid
 		if isFirst {
-			winning = isWin
+			winning = isWinner
 			streak = 1
 			isFirst = false
 			continue
 		}
 
-		if isWin == winning {
+		if isWinner == winning {
 			streak++
 		} else {
 			break
 		}
 	}
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
 
+	if !hasAny {
+		return 0, nil // 无历史，视为 0 连
+	}
 	if !winning {
 		streak = -streak
 	}
