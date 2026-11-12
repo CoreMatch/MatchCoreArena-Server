@@ -39,17 +39,23 @@ func TestGetKFactor(t *testing.T) {
 	}
 }
 
-func TestGetRoundWeight(t *testing.T) {
-	// 13-11 (diff=2)
-	w := GetRoundWeight(13, 11)
-	if w != 1.05 {
-		t.Errorf("Expected 1.05, got %f", w)
+func TestGetSurvivalWeight(t *testing.T) {
+	// 胜队 11 人生还 / 13 初始 = 0.846（>0.75）→ 完胜 1.25
+	w := GetSurvivalWeight(11, 13)
+	if w != 1.25 {
+		t.Errorf("Expected 1.25, got %f", w)
 	}
 
-	// 13-0 (diff=13)
-	w = GetRoundWeight(13, 0)
-	if w != 1.30 {
-		t.Errorf("Expected 1.30, got %f", w)
+	// 胜队 0 人生还 / 13 初始 = 0（<=0.25）→ 惨胜 1.00
+	w = GetSurvivalWeight(0, 13)
+	if w != 1.00 {
+		t.Errorf("Expected 1.00, got %f", w)
+	}
+
+	// 胜队 7 人生还 / 13 初始 = 0.538（>0.5 且 <=0.75）→ 1.15
+	w = GetSurvivalWeight(7, 13)
+	if w != 1.15 {
+		t.Errorf("Expected 1.15, got %f", w)
 	}
 }
 
