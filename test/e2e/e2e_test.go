@@ -116,6 +116,23 @@ func startStubHRPAuth(t *testing.T) *httptest.Server {
 			}
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(fmt.Sprintf(`{"uid":%d,"email":"e2e-%d@example.com","username":"e2e-%d"}`, uid, uid, uid)))
+		case r.URL.Path == "/user/lookup":
+			// 好友请求的用户名解析端点（公开，无鉴权；契约见 HRPAuth）。
+			var body struct {
+				Username string `json:"username"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			for _, uid := range e2eUsers {
+				if fmt.Sprintf("e2e-%d", uid) == body.Username {
+					w.WriteHeader(http.StatusOK)
+					_, _ = w.Write([]byte(fmt.Sprintf(`{"uid":%d,"username":%q}`, uid, body.Username)))
+					return
+				}
+			}
+			w.WriteHeader(http.StatusNotFound)
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -1686,6 +1703,204 @@ func TestMatchCoreE2E(t *testing.T) {
 		}
 		if jsonInt(t, parts[101], "rank_score_delta") <= 0 {
 			t.Errorf("赛季3胜者 delta = %d, want 正增量", jsonInt(t, parts[101], "rank_score_delta"))
+		}
+	})
+
+	// friend CRUD（契约 1.14.0）：请求 → 双向重复 409 → 非双方 404 →
+	// 接受 → 双向可见 → 已是好友 409 → 删除回空。
+	t.Run("friend CRUD", func(t *testing.T) {
+		status, envelope := doJSON(t, env, http.MethodPost, "/api/friends", userToken(103),
+			map[string]any{"username": "e2e-104"})
+		if status != http.StatusCreated {
+			t.Fatalf("发好友请求 status = %d, want 201 (body=%v)", status, envelope)
+		}
+		req := dataMap(t, envelope)
+		if jsonInt(t, req, "user_uid") != 103 || jsonInt(t, req, "friend_uid") != 104 || jsonInt(t, req, "status") != 0 {
+			t.Fatalf("好友请求 = %v, want 103→104 待确认", req)
+		}
+		requestID := jsonInt(t, req, "id")
+
+		// 反向重复（双向查重）→ 409。
+		status, envelope = doJSON(t, env, http.MethodPost, "/api/friends", userToken(104),
+			map[string]any{"username": "e2e-103"})
+		if status != http.StatusConflict || envelope["code"] != "mca_friend_request_exists" {
+			t.Fatalf("反向重复请求 = %d/%v, want 409 mca_friend_request_exists", status, envelope["code"])
+		}
+
+		// 待确认不算好友：列表应为空。
+		status, envelope = doJSON(t, env, http.MethodGet, "/api/friends", userToken(103), nil)
+		if raw, _ := envelope["data"].([]any); status != http.StatusOK || len(raw) != 0 {
+			t.Fatalf("接受前列表 = %d/%v, want 200 空", status, raw)
+		}
+
+		// 非双方（102）无权接受 → 404（不泄露关系存在性）。
+		status, envelope = doJSON(t, env, http.MethodPut,
+			fmt.Sprintf("/api/friends/%d/accept", requestID), userToken(102), nil)
+		if status != http.StatusNotFound || envelope["code"] != "mca_friend_not_found" {
+			t.Fatalf("第三方接受 = %d/%v, want 404 mca_friend_not_found", status, envelope["code"])
+		}
+
+		// 被请求方接受。
+		status, envelope = doJSON(t, env, http.MethodPut,
+			fmt.Sprintf("/api/friends/%d/accept", requestID), userToken(104), nil)
+		if status != http.StatusOK {
+			t.Fatalf("接受好友请求 status = %d (body=%v)", status, envelope)
+		}
+
+		// 双向各看到一条。
+		for _, uid := range []int64{103, 104} {
+			status, envelope = doJSON(t, env, http.MethodGet, "/api/friends", userToken(uid), nil)
+			raw, _ := envelope["data"].([]any)
+			if status != http.StatusOK || len(raw) != 1 {
+				t.Fatalf("uid %d 好友列表 = %d/%d 条, want 200/1 条", uid, status, len(raw))
+			}
+		}
+
+		// 已是好友再请求 → 409。
+		status, envelope = doJSON(t, env, http.MethodPost, "/api/friends", userToken(103),
+			map[string]any{"username": "e2e-104"})
+		if status != http.StatusConflict || envelope["code"] != "mca_friend_request_exists" {
+			t.Fatalf("已是好友再请求 = %d/%v, want 409 mca_friend_request_exists", status, envelope["code"])
+		}
+
+		// 删除后回空。
+		status, envelope = doJSON(t, env, http.MethodDelete,
+			fmt.Sprintf("/api/friends/%d", requestID), userToken(103), nil)
+		if status != http.StatusOK {
+			t.Fatalf("删除好友 status = %d (body=%v)", status, envelope)
+		}
+		status, envelope = doJSON(t, env, http.MethodGet, "/api/friends", userToken(104), nil)
+		if raw, _ := envelope["data"].([]any); status != http.StatusOK || len(raw) != 0 {
+			t.Fatalf("删除后列表 = %d/%v, want 200 空", status, raw)
+		}
+	})
+
+	// team CRUD（契约 1.14.0）：创建（队长自动入队）→ 重名 409 →
+	// 权限拒绝 403 → 成员管理（role 缺省 0 合法）→ 队长保护 → 解散 → 404。
+	t.Run("team CRUD", func(t *testing.T) {
+		status, envelope := doJSON(t, env, http.MethodPost, "/api/teams", userToken(105),
+			map[string]any{"name": "e2e-team-alpha", "description": "e2e squad"})
+		if status != http.StatusCreated {
+			t.Fatalf("创建战队 status = %d, want 201 (body=%v)", status, envelope)
+		}
+		team := dataMap(t, envelope)
+		teamID := jsonInt(t, team, "id")
+		if jsonInt(t, team, "leader_uid") != 105 {
+			t.Fatalf("创建者未成为队长: %v", team)
+		}
+
+		status, envelope = doJSON(t, env, http.MethodGet, fmt.Sprintf("/api/teams/%d", teamID), userToken(106), nil)
+		if status != http.StatusOK || dataMap(t, envelope)["name"] != "e2e-team-alpha" {
+			t.Fatalf("查询战队 = %d/%v, want 200 e2e-team-alpha", status, envelope)
+		}
+
+		// 重名 → 409 mca_team_name_taken。
+		status, envelope = doJSON(t, env, http.MethodPost, "/api/teams", userToken(106),
+			map[string]any{"name": "e2e-team-alpha"})
+		if status != http.StatusConflict || envelope["code"] != "mca_team_name_taken" {
+			t.Fatalf("重名创建 = %d/%v, want 409 mca_team_name_taken", status, envelope["code"])
+		}
+
+		// 圈外人添加成员 → 403 mca_not_team_leader。
+		status, envelope = doJSON(t, env, http.MethodPost, fmt.Sprintf("/api/teams/%d/members", teamID),
+			userToken(106), map[string]any{"user_uid": 107})
+		if status != http.StatusForbidden || envelope["code"] != "mca_not_team_leader" {
+			t.Fatalf("圈外人添加 = %d/%v, want 403 mca_not_team_leader", status, envelope["code"])
+		}
+
+		// 队长添加：role 缺省 0（契约 required: [user_uid]），加 107；role=1 加 108。
+		status, envelope = doJSON(t, env, http.MethodPost, fmt.Sprintf("/api/teams/%d/members", teamID),
+			userToken(105), map[string]any{"user_uid": 107})
+		if status != http.StatusOK {
+			t.Fatalf("添加普通成员（role 缺省）status = %d (body=%v)", status, envelope)
+		}
+		if jsonInt(t, dataMap(t, envelope), "role") != 0 {
+			t.Fatalf("缺省 role = %v, want 0", envelope)
+		}
+		status, envelope = doJSON(t, env, http.MethodPost, fmt.Sprintf("/api/teams/%d/members", teamID),
+			userToken(105), map[string]any{"user_uid": 108, "role": 1})
+		if status != http.StatusOK {
+			t.Fatalf("添加副队长 status = %d (body=%v)", status, envelope)
+		}
+
+		// 重复添加与自我添加 → 400（契约该端点无 409）。
+		status, envelope = doJSON(t, env, http.MethodPost, fmt.Sprintf("/api/teams/%d/members", teamID),
+			userToken(105), map[string]any{"user_uid": 107})
+		if status != http.StatusBadRequest {
+			t.Fatalf("重复添加 = %d, want 400 (body=%v)", status, envelope)
+		}
+		status, envelope = doJSON(t, env, http.MethodPost, fmt.Sprintf("/api/teams/%d/members", teamID),
+			userToken(105), map[string]any{"user_uid": 105})
+		if status != http.StatusBadRequest {
+			t.Fatalf("添加自己 = %d, want 400 (body=%v)", status, envelope)
+		}
+
+		// 成员列表：队长 + 107 + 108。
+		status, envelope = doJSON(t, env, http.MethodGet, fmt.Sprintf("/api/teams/%d/members", teamID), userToken(105), nil)
+		members, _ := envelope["data"].([]any)
+		if status != http.StatusOK || len(members) != 3 {
+			t.Fatalf("成员数 = %d/%d, want 200/3", status, len(members))
+		}
+
+		// 副队长可添加成员（契约：leader or vice-leader）。
+		status, envelope = doJSON(t, env, http.MethodPost, fmt.Sprintf("/api/teams/%d/members", teamID),
+			userToken(108), map[string]any{"user_uid": 109})
+		if status != http.StatusOK {
+			t.Fatalf("副队长添加成员 status = %d (body=%v)", status, envelope)
+		}
+
+		// 队长保护：副队长移除队长 → 400。
+		status, envelope = doJSON(t, env, http.MethodDelete, fmt.Sprintf("/api/teams/%d/members/105", teamID), userToken(108), nil)
+		if status != http.StatusBadRequest {
+			t.Fatalf("移除队长 = %d, want 400 (body=%v)", status, envelope)
+		}
+
+		// 晋升/降职（role=0 是契约合法值）。
+		status, envelope = doJSON(t, env, http.MethodPut, fmt.Sprintf("/api/teams/%d/members/107/role", teamID),
+			userToken(105), map[string]any{"role": 1})
+		if status != http.StatusOK {
+			t.Fatalf("晋升成员 status = %d (body=%v)", status, envelope)
+		}
+
+		// 副队长降职另一副队长 → 403（仅队长可做）。
+		status, envelope = doJSON(t, env, http.MethodPut, fmt.Sprintf("/api/teams/%d/members/107/role", teamID),
+			userToken(108), map[string]any{"role": 0})
+		if status != http.StatusForbidden || envelope["code"] != "mca_not_team_leader" {
+			t.Fatalf("副队长降职副队长 = %d/%v, want 403 mca_not_team_leader", status, envelope["code"])
+		}
+
+		// 副队长可晋升普通成员（服务语义：自晋升才限队长）。
+		status, envelope = doJSON(t, env, http.MethodPut, fmt.Sprintf("/api/teams/%d/members/109/role", teamID),
+			userToken(108), map[string]any{"role": 1})
+		if status != http.StatusOK {
+			t.Fatalf("副队长晋升普通成员 status = %d (body=%v)", status, envelope)
+		}
+
+		// 队长降职成员（role=0 合法值走通）。
+		status, envelope = doJSON(t, env, http.MethodPut, fmt.Sprintf("/api/teams/%d/members/107/role", teamID),
+			userToken(105), map[string]any{"role": 0})
+		if status != http.StatusOK {
+			t.Fatalf("队长降职成员 status = %d (body=%v)", status, envelope)
+		}
+
+		// 队长移除 109。
+		status, envelope = doJSON(t, env, http.MethodDelete, fmt.Sprintf("/api/teams/%d/members/109", teamID), userToken(105), nil)
+		if status != http.StatusOK {
+			t.Fatalf("移除成员 status = %d (body=%v)", status, envelope)
+		}
+
+		// 非队长解散 → 403；队长解散 → 200；解散后查询 → 404。
+		status, envelope = doJSON(t, env, http.MethodDelete, fmt.Sprintf("/api/teams/%d", teamID), userToken(107), nil)
+		if status != http.StatusForbidden || envelope["code"] != "mca_not_team_leader" {
+			t.Fatalf("非队长解散 = %d/%v, want 403 mca_not_team_leader", status, envelope["code"])
+		}
+		status, envelope = doJSON(t, env, http.MethodDelete, fmt.Sprintf("/api/teams/%d", teamID), userToken(105), nil)
+		if status != http.StatusOK {
+			t.Fatalf("解散战队 status = %d (body=%v)", status, envelope)
+		}
+		status, envelope = doJSON(t, env, http.MethodGet, fmt.Sprintf("/api/teams/%d", teamID), userToken(105), nil)
+		if status != http.StatusNotFound || envelope["code"] != "mca_team_not_found" {
+			t.Fatalf("解散后查询 = %d/%v, want 404 mca_team_not_found", status, envelope["code"])
 		}
 	})
 }

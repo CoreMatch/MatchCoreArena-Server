@@ -38,7 +38,7 @@ func TestInviteCreate(t *testing.T) {
 		mock.ExpectQuery(`SELECT id, inviter_uid, invitee_uid, match_type, status`).
 			WithArgs(int64(42)).
 			WillReturnRows(sqlmock.NewRows(inviteRowColumns).
-				AddRow(42, 7, 8, "2v2", "pending", "2026-11-12 10:00:00", "2026-11-12 10:05:00", nil, nil))
+				AddRow(42, 7, 8, "2v2", "pending", "2026-11-12 10:00:00", "2099-01-01 00:00:00", nil, nil))
 
 		// PartyInviteTTLSeconds 未配置 → 校验缺省 300；此处直接以 0 传入，
 		// 服务层按配置原值透传（缺省由 config 校验层补齐）。
@@ -123,14 +123,14 @@ func TestInviteAcceptReject(t *testing.T) {
 		mock.ExpectQuery(`SELECT inviter_uid, invitee_uid, match_type, status, expires_at FROM matchmaking_party_invites`).
 			WithArgs(int64(42)).
 			WillReturnRows(sqlmock.NewRows([]string{"inviter_uid", "invitee_uid", "match_type", "status", "expires_at"}).
-				AddRow(7, 8, "2v2", "pending", "2026-11-12 10:05:00"))
+				AddRow(7, 8, "2v2", "pending", "2099-01-01 00:00:00"))
 		mock.ExpectExec(`UPDATE matchmaking_party_invites SET status`).
 			WithArgs(service.InviteStatusAccepted, int64(42)).
 			WillReturnResult(sqlmock.NewResult(0, 1))
 		mock.ExpectQuery(`SELECT id, inviter_uid, invitee_uid, match_type, status`).
 			WithArgs(int64(42)).
 			WillReturnRows(sqlmock.NewRows(inviteRowColumns).
-				AddRow(42, 7, 8, "2v2", "accepted", "2026-11-12 10:00:00", "2026-11-12 10:05:00", "2026-11-12 10:01:00", nil))
+				AddRow(42, 7, 8, "2v2", "accepted", "2026-11-12 10:00:00", "2099-01-01 00:00:00", "2026-11-12 10:01:00", nil))
 
 		inv, err := svc.AcceptInvite(t.Context(), 8, 42)
 		if err != nil {
@@ -155,14 +155,14 @@ func TestInviteAcceptReject(t *testing.T) {
 		mock.ExpectQuery(`SELECT inviter_uid, invitee_uid, match_type, status, expires_at FROM matchmaking_party_invites`).
 			WithArgs(int64(42)).
 			WillReturnRows(sqlmock.NewRows([]string{"inviter_uid", "invitee_uid", "match_type", "status", "expires_at"}).
-				AddRow(7, 8, "2v2", "pending", "2026-11-12 10:05:00"))
+				AddRow(7, 8, "2v2", "pending", "2099-01-01 00:00:00"))
 		mock.ExpectExec(`UPDATE matchmaking_party_invites SET status`).
 			WithArgs(service.InviteStatusRejected, int64(42)).
 			WillReturnResult(sqlmock.NewResult(0, 1))
 		mock.ExpectQuery(`SELECT id, inviter_uid, invitee_uid, match_type, status`).
 			WithArgs(int64(42)).
 			WillReturnRows(sqlmock.NewRows(inviteRowColumns).
-				AddRow(42, 7, 8, "2v2", "rejected", "2026-11-12 10:00:00", "2026-11-12 10:05:00", "2026-11-12 10:01:00", nil))
+				AddRow(42, 7, 8, "2v2", "rejected", "2026-11-12 10:00:00", "2099-01-01 00:00:00", "2026-11-12 10:01:00", nil))
 
 		inv, err := svc.RejectInvite(t.Context(), 8, 42)
 		if err != nil {
@@ -187,7 +187,7 @@ func TestInviteAcceptReject(t *testing.T) {
 		mock.ExpectQuery(`SELECT inviter_uid, invitee_uid, match_type, status, expires_at FROM matchmaking_party_invites`).
 			WithArgs(int64(42)).
 			WillReturnRows(sqlmock.NewRows([]string{"inviter_uid", "invitee_uid", "match_type", "status", "expires_at"}).
-				AddRow(7, 8, "2v2", "pending", "2026-11-12 10:05:00"))
+				AddRow(7, 8, "2v2", "pending", "2099-01-01 00:00:00"))
 
 		// uid 9 既非邀请人 7 也非受邀人 8。
 		_, err = svc.AcceptInvite(t.Context(), 9, 42)
@@ -211,7 +211,7 @@ func TestInviteAcceptReject(t *testing.T) {
 		mock.ExpectQuery(`SELECT inviter_uid, invitee_uid, match_type, status, expires_at FROM matchmaking_party_invites`).
 			WithArgs(int64(42)).
 			WillReturnRows(sqlmock.NewRows([]string{"inviter_uid", "invitee_uid", "match_type", "status", "expires_at"}).
-				AddRow(7, 8, "2v2", "accepted", "2026-11-12 10:05:00"))
+				AddRow(7, 8, "2v2", "accepted", "2099-01-01 00:00:00"))
 
 		_, err = svc.AcceptInvite(t.Context(), 8, 42)
 		var ae *apperr.Error

@@ -100,14 +100,21 @@ func (h *TeamHandler) AddMember(c *gin.Context) {
 
 	var body struct {
 		UserUID int64 `json:"user_uid" binding:"required"`
-		Role    int   `json:"role"`
+		// role 在契约中可缺省（缺省 0=普通成员）；用指针避免
+		// binding:"required" 把合法的 0 值误判为缺失。
+		Role *int `json:"role"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		response.FailCode(c, apperr.CodeMCAInvalidRequest, "user_uid 参数必填")
 		return
 	}
 
-	member, err := h.svc.AddMember(c.Request.Context(), uid, teamID, body.UserUID, body.Role)
+	role := 0
+	if body.Role != nil {
+		role = *body.Role
+	}
+
+	member, err := h.svc.AddMember(c.Request.Context(), uid, teamID, body.UserUID, role)
 	if err != nil {
 		response.Fail(c, "添加成员失败", err)
 		return
@@ -130,14 +137,15 @@ func (h *TeamHandler) UpdateMemberRole(c *gin.Context) {
 	}
 
 	var body struct {
-		Role int `json:"role" binding:"required"`
+		// role=0（普通成员）是契约合法值；用指针区分"缺省"与 0。
+		Role *int `json:"role" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		response.FailCode(c, apperr.CodeMCAInvalidRequest, "role 参数必填")
 		return
 	}
 
-	if err := h.svc.UpdateMemberRole(c.Request.Context(), uid, teamID, targetUID, body.Role); err != nil {
+	if err := h.svc.UpdateMemberRole(c.Request.Context(), uid, teamID, targetUID, *body.Role); err != nil {
 		response.Fail(c, "调整角色失败", err)
 		return
 	}
