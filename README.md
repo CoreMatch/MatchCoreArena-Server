@@ -1,23 +1,32 @@
-# MatchCoreArena-Server
+<div align="center">
+  <img src="https://mcnb.dev/images/hero-wide-1x.webp" alt="MatchCore artwork, not gameplay" width="800">
+  <h1>MatchCoreArena Server</h1>
+  <p><strong>Server-authoritative matches. Every result accounted for.</strong></p>
+  <p><a href="./README.zh-CN.md">简体中文</a></p>
+</div>
 
-> 跑 E2E 闭环：`./test/e2e/run-e2e.sh`（一键起 MariaDB + 跑 e2e + 清理）
+MatchCoreArena Server is the matchmaking and settlement core for the MatchCore Arena ecosystem, serving players, game servers, and operators.
 
-Matchmaking and settlement core service of the MatchCoreArena ecosystem:
-a standalone Go/Gin HTTP service (no Minecraft server runtime dependency).
-Design decisions live in [`knowledge/`](knowledge/README.md); the outward
-contract lives in HA-Contract.
+## Why MatchCoreArena Server
 
-## Deployment facts
+- **Weighted competition.** Weighted Elo ratings reflect completed matches across seasons and rankings.
+- **Flexible parties.** Solo queues and consent-based party play support different ways to compete.
+- **Reliable reporting.** Idempotent reports prevent duplicate settlement, with typed rejection responses when a report cannot be accepted.
+- **Clear authority.** The server owns matchmaking decisions and final results; game-side reporters submit outcomes.
+- **Connected identity.** HRPAuth provides the identity boundary across the ecosystem.
 
-Authoritative deployment facts live in [`deploy-manifest.yaml`](deploy-manifest.yaml)
-at the repo root (consumed by HA-Cupbearer's orchestrator;
-`manager: aapanel` means the process is panel-managed and the orchestrator
-treats it as read-only):
+## Learn more
 
-- Listens on `:9178` (public); health probe `GET /api/status`.
-- Requires MySQL (single source of truth) and Redis (cache-only), plus a
-  reachable HRPAuth core — the only outbound runtime dependency
-  (see `knowledge/0008`).
-- Config file `config/config.yaml` (`CONFIG_PATH` overrides the path;
-  template version 1.9.0); versioned schema migrations run automatically
-  on startup (see `knowledge/0017`).
+- [HA Wiki](https://wiki.mcnb.dev/) — ecosystem documentation
+- [HA Contract](https://github.com/CoreMatch/HA-Contract) — interface contracts
+- [MatchCore Portal](https://mcnb.dev/) — Arena overview
+- [HRPAuth](https://auth.mcnb.dev/) — accounts and identity services
+- [Arena status](https://arena.mcnb.dev/api/status) — live service status
+
+## Runtime boundary
+
+Requires MySQL as the source of truth, Redis for caching, and a reachable HRPAuth service. It does not provide anti-cheat or guarantee fairness or capacity at any scale.
+
+## License
+
+Licensed under [AGPL-3.0](LICENSE).
