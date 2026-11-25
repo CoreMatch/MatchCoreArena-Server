@@ -56,6 +56,7 @@ func TestHRPAuthDownCode(t *testing.T) {
 			var env struct {
 				Success bool   `json:"success"`
 				Code    string `json:"code"`
+				Message string `json:"message"`
 			}
 			if err := json.Unmarshal(w.Body.Bytes(), &env); err != nil {
 				t.Fatalf("unmarshal: %v (body=%s)", err, w.Body.String())
@@ -65,6 +66,9 @@ func TestHRPAuthDownCode(t *testing.T) {
 			}
 			if env.Code != "oauth_hrpauth_down" {
 				t.Fatalf("code = %q, want oauth_hrpauth_down", env.Code)
+			}
+			if env.Message != "Armorial 不可用" {
+				t.Fatalf("message = %q, want Armorial branding", env.Message)
 			}
 		})
 	}

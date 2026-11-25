@@ -70,7 +70,7 @@ func main() {
 	defer redisClient.Close()
 	log.Println("Redis 连接成功")
 
-	// 6. 初始化 HRPAuth 客户端（启动时校验 HRPAuth 可达性）
+	// 6. 初始化 Armorial 客户端（启动时校验 Armorial 可达性）
 	hrpauthClient, err := auth.NewClient(
 		appCfg.Auth.HRPAuth.BaseURL,
 		appCfg.Auth.HRPAuth.PublicClientID,
@@ -78,9 +78,9 @@ func main() {
 		appCfg.Auth.HRPAuth.ServiceClientSecret,
 	)
 	if err != nil {
-		log.Fatalf("初始化 HRPAuth 客户端失败: %v", err)
+		log.Fatalf("初始化 Armorial 客户端失败: %v", err)
 	}
-	log.Println("HRPAuth 客户端初始化成功")
+	log.Println("Armorial 客户端初始化成功")
 	if appCfg.Auth.HRPAuth.ServiceClientID == "" || appCfg.Auth.HRPAuth.ServiceClientSecret == "" {
 		log.Println("警告: auth.hrpauth.service_client_id/secret 未配置，结算参与者身份解析（服务间接点）将失败")
 	}
@@ -99,7 +99,7 @@ func main() {
 		log.Printf("警告: 加载 tokens.yaml 失败 (可能不存在): %v", err)
 	}
 
-	// 8. 创建 token verifier（支持 HRPAuth、运维 Token 和 Service Token）
+	// 8. 创建 token verifier（支持 Armorial、运维 Token 和 Service Token）
 	tokenVerifier := auth.NewTokenVerifier(hrpauthClient, redisClient, appCfg.Auth.MaintenanceToken, tokenStore)
 
 	// 9. 初始化 Gin 路由

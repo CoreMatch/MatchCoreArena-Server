@@ -3,9 +3,9 @@
 This knowledge base is the project's memo to itself. It is self-hosted and
 maintained by this repository (MatchCoreArena-Server) and records internal design
 decisions. It does **not** define or override outward behavior.
-Outward behavior is specified by HA-Contract
+Outward behavior is specified by Armorial Contract
 (https://github.com/SamuelCheston/HA-Contract); if an entry here ever conflicts
-with HA-Contract, fix the entry, not the contract.
+with Armorial Contract, fix the entry, not the contract.
 
 ## Entries
 

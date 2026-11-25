@@ -47,14 +47,14 @@ type JoinTarget struct {
 
 // FormedGroup 匹配成局记录。
 type FormedGroup struct {
-	GroupID    int64         `json:"group_id"`
-	MatchType  string        `json:"match_type"`
-	FormedAt   string        `json:"formed_at"`
-	Members    []GroupMember `json:"members"`
+	GroupID   int64         `json:"group_id"`
+	MatchType string        `json:"match_type"`
+	FormedAt  string        `json:"formed_at"`
+	Members   []GroupMember `json:"members"`
 	// Room 成局预占的房间标识（契约 1.10.0 房间层）：属于目标子服的
 	// 命名空间；未启用房间层或预占已失效时省略。
-	Room       string        `json:"room,omitempty"`
-	JoinTarget *JoinTarget   `json:"join_target,omitempty"`
+	Room       string      `json:"room,omitempty"`
+	JoinTarget *JoinTarget `json:"join_target,omitempty"`
 }
 
 // QueueStats 队列规模统计（只读展示用，不参与入队/成局逻辑）。
@@ -79,14 +79,14 @@ type MatchmakingStatus struct {
 // 部署沿用成局记录的下发规则（未配置则省略）。
 // 只含路由所需的最小信息：无成员名单、无评分、无载荷。
 type MatchAssignment struct {
-	Assigned   bool        `json:"assigned"`
+	Assigned bool `json:"assigned"`
 	// Reason 仅在 Assigned 为 false 但存在有效成局时给出原因
 	//（目前只有 no_room_available）；普通"无分配"省略。
-	Reason     string      `json:"reason,omitempty"`
-	GroupID    int64       `json:"group_id,omitempty"`
-	MatchType  string      `json:"match_type,omitempty"`
-	FormedAt   string      `json:"formed_at,omitempty"`
-	TeamID     string      `json:"team_id,omitempty"`
+	Reason    string `json:"reason,omitempty"`
+	GroupID   int64  `json:"group_id,omitempty"`
+	MatchType string `json:"match_type,omitempty"`
+	FormedAt  string `json:"formed_at,omitempty"`
+	TeamID    string `json:"team_id,omitempty"`
 	// Room 预占的房间标识：属于目标子服的命名空间（子服侧自己的
 	// arena/游戏名），按静态清单解析。
 	Room       string      `json:"room,omitempty"`
@@ -212,7 +212,7 @@ func (s *matchmakingService) Join(ctx context.Context, uid int64, matchType stri
 }
 
 // joinAsParty 以队伍为单位整体入队（事务）：解析成员 UUID、校验同意
-//（契约 1.11.0）、建立临时队伍、全队写入队列、消费用掉的邀请同意。
+// （契约 1.11.0）、建立临时队伍、全队写入队列、消费用掉的邀请同意。
 // 临时队伍在成局或整队离队时清理。
 func (s *matchmakingService) joinAsParty(ctx context.Context, callerUID int64, mode config.MatchMode, members []string) ([]*QueueEntry, error) {
 	if len(members) < 2 {
@@ -241,10 +241,10 @@ func (s *matchmakingService) joinAsParty(ctx context.Context, callerUID int64, m
 			switch {
 			case errors.Is(err, auth.ErrUserNotFound):
 				return nil, apperr.New(apperr.CodeMCAUserNotFound,
-					fmt.Sprintf("队伍成员 (uuid: %s) 在 HRPAuth 中不存在", uuid))
+					fmt.Sprintf("队伍成员 (uuid: %s) 在 Armorial 中不存在", uuid))
 			case errors.Is(err, auth.ErrServiceAuth):
 				return nil, apperr.New(apperr.CodeOAuthHRPAuthDown,
-					"HRPAuth 服务凭据不可用，无法解析队伍成员身份")
+					"Armorial 服务凭据不可用，无法解析队伍成员身份")
 			default:
 				return nil, apperr.New(apperr.CodeOAuthHRPAuthDown,
 					fmt.Sprintf("解析队伍成员 (uuid: %s) 身份失败", uuid))
@@ -433,10 +433,10 @@ func (s *matchmakingService) Invite(ctx context.Context, callerUID int64, matchT
 			switch {
 			case errors.Is(err, auth.ErrUserNotFound):
 				return nil, apperr.New(apperr.CodeMCAUserNotFound,
-					fmt.Sprintf("受邀成员 (uuid: %s) 在 HRPAuth 中不存在", uuid))
+					fmt.Sprintf("受邀成员 (uuid: %s) 在 Armorial 中不存在", uuid))
 			case errors.Is(err, auth.ErrServiceAuth):
 				return nil, apperr.New(apperr.CodeOAuthHRPAuthDown,
-					"HRPAuth 服务凭据不可用，无法解析受邀成员身份")
+					"Armorial 服务凭据不可用，无法解析受邀成员身份")
 			default:
 				return nil, apperr.New(apperr.CodeOAuthHRPAuthDown,
 					fmt.Sprintf("解析受邀成员 (uuid: %s) 身份失败", uuid))
@@ -889,7 +889,7 @@ func (s *matchmakingService) Assignment(ctx context.Context, uuid string) (*Matc
 			return &MatchAssignment{Assigned: false}, nil
 		case errors.Is(err, auth.ErrServiceAuth):
 			return nil, apperr.New(apperr.CodeOAuthHRPAuthDown,
-				"HRPAuth 服务凭据不可用，无法解析玩家身份")
+				"Armorial 服务凭据不可用，无法解析玩家身份")
 		default:
 			return nil, apperr.New(apperr.CodeOAuthHRPAuthDown,
 				fmt.Sprintf("解析玩家 (uuid: %s) 身份失败", uuid))
@@ -1314,7 +1314,7 @@ func (e *MatchmakingEngine) commitGroup(ctx context.Context, mode config.MatchMo
 //
 // 按清单顺序取第一个"容量够且无活跃绑定"的房间；(server_name,
 // room_name) 主键从结构上保证并发下同一房间只能被一个 group 抢到
-//（竞争失败者得 1062，继续尝试下一间）。全部房间不可用则返回
+// （竞争失败者得 1062，继续尝试下一间）。全部房间不可用则返回
 // errNoRoomAvailable。过期但未及清理的绑定按"已占"对待，至多延迟
 // 一个 tick 释放，不影响正确性。
 func (e *MatchmakingEngine) reserveRoom(ctx context.Context, tx *sql.Tx, groupID int64, mode config.MatchMode) error {

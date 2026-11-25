@@ -7,31 +7,31 @@ import "errors"
 
 var (
 	// ErrTokenExpired access_token 已过期，客户端应调 /api/auth/refresh。
-	ErrTokenExpired = errors.New("hrpauth: token expired")
+	ErrTokenExpired = errors.New("armorial: token expired")
 
 	// ErrTokenInvalid access_token 无效（不是合法格式或在 HRPAuth 中不存在）。
-	ErrTokenInvalid = errors.New("hrpauth: token invalid")
+	ErrTokenInvalid = errors.New("armorial: token invalid")
 
 	// ErrCredentialsInvalid 邮箱或密码错误。
-	ErrCredentialsInvalid = errors.New("hrpauth: credentials invalid")
+	ErrCredentialsInvalid = errors.New("armorial: credentials invalid")
 
 	// ErrTotpInvalid TOTP passcode 错误或 login_ticket 失效。
-	ErrTotpInvalid = errors.New("hrpauth: totp invalid")
+	ErrTotpInvalid = errors.New("armorial: totp invalid")
 
 	// ErrTokenRefreshFailed refresh_token 失效或过期。
-	ErrTokenRefreshFailed = errors.New("hrpauth: refresh failed")
+	ErrTokenRefreshFailed = errors.New("armorial: refresh failed")
 
 	// ErrRateLimited 触发 HRPAuth 限流。
-	ErrRateLimited = errors.New("hrpauth: rate limited")
+	ErrRateLimited = errors.New("armorial: rate limited")
 
 	// ErrUpstream HRPAuth 上游不可用（5xx、网络错误、超时）。
-	ErrUpstream = errors.New("hrpauth: upstream unavailable")
+	ErrUpstream = errors.New("armorial: upstream unavailable")
 
 	// ErrUserNotFound 在 HRPAuth 中找不到指定用户（username 或 uid）。
-	ErrUserNotFound = errors.New("hrpauth: user not found")
+	ErrUserNotFound = errors.New("armorial: user not found")
 
 	// ErrServiceAuth 服务身份不可用：服务凭据未配置、client_credentials
 	// 换取/刷新服务令牌失败，或服务令牌被 HRPAuth 拒绝（401/403）。
 	// 与瞬时上游故障（ErrUpstream）区分：这是凭据/授权问题，重试无意义。
-	ErrServiceAuth = errors.New("hrpauth: service credentials unavailable")
+	ErrServiceAuth = errors.New("armorial: service credentials unavailable")
 )

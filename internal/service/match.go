@@ -95,18 +95,18 @@ type ParticipantDetail struct {
 // game_id 为上报方提供的稳定幂等键：同一 game_id 重复上报不重复结算。
 // matchmaking_group_id 关联匹配成局，用于队伍（party）共享结算。
 type TeamReportInput struct {
-	MatchType       string     `json:"match_type" binding:"required"`
-	Teams           []TeamInfo `json:"teams"`
-	WinnerTeam      TeamInfo   `json:"winner_team"`
-	LoserTeams      []TeamInfo `json:"loser_teams"`
-	DurationSeconds int        `json:"duration_seconds"`
-	MapName         string     `json:"map_name"`
-	ServerID        string     `json:"server_id"`
-	GameID          string     `json:"game_id"`
-	Source          string     `json:"source"`
-	MatchmakingGroupID int64   `json:"matchmaking_group_id"`
-	StartedAt       string     `json:"started_at" binding:"required"`
-	FinishedAt      string     `json:"finished_at" binding:"required"`
+	MatchType          string     `json:"match_type" binding:"required"`
+	Teams              []TeamInfo `json:"teams"`
+	WinnerTeam         TeamInfo   `json:"winner_team"`
+	LoserTeams         []TeamInfo `json:"loser_teams"`
+	DurationSeconds    int        `json:"duration_seconds"`
+	MapName            string     `json:"map_name"`
+	ServerID           string     `json:"server_id"`
+	GameID             string     `json:"game_id"`
+	Source             string     `json:"source"`
+	MatchmakingGroupID int64      `json:"matchmaking_group_id"`
+	StartedAt          string     `json:"started_at" binding:"required"`
+	FinishedAt         string     `json:"finished_at" binding:"required"`
 }
 
 // TeamInfo 队伍上报信息。字段必填性由 service 层 validateTeams 以
@@ -487,10 +487,10 @@ func (s *matchService) Report(ctx context.Context, reporterUID int64, in TeamRep
 				switch {
 				case errors.Is(err, auth.ErrUserNotFound):
 					return nil, false, apperr.New(apperr.CodeMCAUserNotFound,
-						fmt.Sprintf("参与者 (uuid: %s) 在 HRPAuth 中不存在", m.UUID))
+						fmt.Sprintf("参与者 (uuid: %s) 在 Armorial 中不存在", m.UUID))
 				case errors.Is(err, auth.ErrServiceAuth):
 					return nil, false, apperr.New(apperr.CodeOAuthHRPAuthDown,
-						"HRPAuth 服务凭据不可用，无法解析参与者身份")
+						"Armorial 服务凭据不可用，无法解析参与者身份")
 				default:
 					return nil, false, apperr.New(apperr.CodeOAuthHRPAuthDown,
 						fmt.Sprintf("解析参与者 (uuid: %s) 身份失败", m.UUID))
@@ -863,7 +863,7 @@ func (s *matchService) resolveUID(ctx context.Context, uuid string) (int64, erro
 		if errors.Is(err, auth.ErrServiceAuth) {
 			return 0, fmt.Errorf("服务身份不可用: %w", err)
 		}
-		return 0, fmt.Errorf("调用 HRPAuth 失败: %w", err)
+		return 0, fmt.Errorf("调用 Armorial 失败: %w", err)
 	}
 	return uid, nil
 }

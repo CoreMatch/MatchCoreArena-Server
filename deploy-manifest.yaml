@@ -3,7 +3,7 @@
 manifest_version: 1
 kind: service
 project: mca-server
-display_name: MatchCoreArena-Server
+display_name: Armorial MatchCoreArena-Server
 group: game
 # /api/status 上报的 version = 装载迁移后的配置版本，恒等于代码
 # config.CurrentVersion "1.11.0"（main.go 传 appCfg.Version；
@@ -43,7 +43,7 @@ facts:
         json_not_empty: data.version
   depends_on:
     # main.go：database/sql + redis 启动硬依赖（Ping 失败即 fatal）；
-    # auth.NewClient 启动期校验 HRPAuth 可达（knowledge 0008：唯一出站运行时
+    # auth.NewClient 启动期校验 Armorial 可达（knowledge 0008：唯一出站运行时
     # 依赖），compose depends_on hrpauth: service_healthy。
     - project: mysql
       kind: required

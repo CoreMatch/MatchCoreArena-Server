@@ -48,7 +48,7 @@ func NewClient(baseURL, publicClientID, serviceClientID, serviceClientSecret str
 	req, _ := http.NewRequest(http.MethodGet, baseURL+"/status", nil)
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("hrpauth 不可达: %w", err)
+		return nil, fmt.Errorf("Armorial 不可达: %w", err)
 	}
 	resp.Body.Close()
 

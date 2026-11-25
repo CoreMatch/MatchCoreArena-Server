@@ -13,19 +13,19 @@ MatchCoreArena Server is the matchmaking and settlement core for the MatchCore A
 - **Flexible parties.** Solo queues and consent-based party play support different ways to compete.
 - **Reliable reporting.** Idempotent reports prevent duplicate settlement, with typed rejection responses when a report cannot be accepted.
 - **Clear authority.** The server owns matchmaking decisions and final results; game-side reporters submit outcomes.
-- **Connected identity.** HRPAuth provides the identity boundary across the ecosystem.
+- **Connected identity.** Armorial provides the identity boundary across the ecosystem.
 
 ## Learn more
 
-- [HA Wiki](https://wiki.mcnb.dev/) — ecosystem documentation
-- [HA Contract](https://github.com/CoreMatch/HA-Contract) — interface contracts
+- [Armorial Wiki](https://wiki.mcnb.dev/) — ecosystem documentation
+- [Armorial Contract](https://github.com/CoreMatch/HA-Contract) — interface contracts
 - [MatchCore Portal](https://mcnb.dev/) — Arena overview
-- [HRPAuth](https://auth.mcnb.dev/) — accounts and identity services
+- [Armorial](https://auth.mcnb.dev/) — accounts and identity services
 - [Arena status](https://arena.mcnb.dev/api/status) — live service status
 
 ## Runtime boundary
 
-Requires MySQL as the source of truth, Redis for caching, and a reachable HRPAuth service. It does not provide anti-cheat or guarantee fairness or capacity at any scale.
+Requires MySQL as the source of truth, Redis for caching, and a reachable Armorial service. It does not provide anti-cheat or guarantee fairness or capacity at any scale.
 
 ## License
 

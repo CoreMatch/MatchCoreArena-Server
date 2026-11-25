@@ -48,7 +48,7 @@ func (h *AuthHandler) LoginTicket(c *gin.Context) {
 			response.FailCode(c, apperr.CodeOAuthRateLimited, "请求过于频繁，请稍后重试")
 			return
 		}
-		response.FailCode(c, apperr.CodeOAuthHRPAuthDown, "HRPAuth 不可用")
+		response.FailCode(c, apperr.CodeOAuthHRPAuthDown, "Armorial 不可用")
 		return
 	}
 
@@ -77,7 +77,7 @@ func (h *AuthHandler) TotpVerify(c *gin.Context) {
 			response.FailCode(c, apperr.CodeOAuthInvalidGrant, "TOTP 验证失败")
 			return
 		}
-		response.FailCode(c, apperr.CodeOAuthHRPAuthDown, "HRPAuth 不可用")
+		response.FailCode(c, apperr.CodeOAuthHRPAuthDown, "Armorial 不可用")
 		return
 	}
 
@@ -104,7 +104,7 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 			response.FailCode(c, apperr.CodeOAuthRefreshFailed, "refresh_token 失效或过期")
 			return
 		}
-		response.FailCode(c, apperr.CodeOAuthHRPAuthDown, "HRPAuth 不可用")
+		response.FailCode(c, apperr.CodeOAuthHRPAuthDown, "Armorial 不可用")
 		return
 	}
 
